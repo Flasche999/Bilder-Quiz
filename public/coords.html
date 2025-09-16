@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Koordinaten-Finder – Bildklick-Quiz</title>
+  <style>
+    :root { --bg:#0d1117; --card:#161b22; --line:#30363d; --fg:#e6edf3; }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+    .container{max-width:1100px;margin:0 auto;padding:16px}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;flex:1;min-width:280px}
+    .h{margin:0 0 10px 0}
+    .btn{background:#21262d;border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--fg);cursor:pointer}
+    .btn.ok{background:#238636;border-color:#2ea043}
+    .input,.select,textarea{width:100%;background:#0d1117;color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:8px}
+    .small{opacity:.8;font-size:12px}
+    .stage{position:relative;width:100%;aspect-ratio:16/9;background:#0a0a0a;border-radius:12px;overflow:hidden;border:1px solid var(--line);user-select:none}
+    .stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    .click-dot{position:absolute;width:12px;height:12px;border-radius:50%;border:2px solid #f5f5f5;background:transparent;transform:translate(-50%,-50%);pointer-events:none}
+    .click-ring{position:absolute;border:2px dashed #c9d1d9;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
+    .code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:10px;white-space:pre;overflow:auto}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="h">Koordinaten-Finder für die Playlist</h1>
+
+    <div class="row">
+      <div class="card" style="flex:2">
+        <h3 class="h">Bild wählen</h3>
+        <div class="grid2">
+          <div>
+            <div class="small">Bild-URL (z. B. /images/bild1.png)</div>
+            <input id="imgUrl" class="input" placeholder="/images/bild1.png" />
+          </div>
+          <div>
+            <div class="small">oder Datei hochladen</div>
+            <input id="fileInput" type="file" accept="image/*" class="input" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="loadBtn" class="btn ok">Bild laden</button>
+          <div class="small" style="margin-left:auto">Tipp: Mausrad/± ändert den Radius</div>
+        </div>
+
+        <div class="stage" id="stage">
+          <img id="stageImg" alt="Vorschau" />
+          <div id="previewDot" class="click-dot" style="display:none"></div>
+          <div id="previewRing" class="click-ring" style="display:none"></div>
+          <div id="targetRing"  class="click-ring" style="display:none;border-color:#58a6ff"></div>
+        </div>
+
+        <div class="grid2" style="margin-top:12px">
+          <div>
+            <div class="small">x (0..1)</div>
+            <input id="x01" class="input" readonly />
+          </div>
+          <div>
+            <div class="small">y (0..1)</div>
+            <input id="y01" class="input" readonly />
+          </div>
+          <div>
+            <div class="small">x (%)</div>
+            <input id="xPct" class="input" readonly />
+          </div>
+          <div>
+            <div class="small">y (%)</div>
+            <input id="yPct" class="input" readonly />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:10px;align-items:center">
+          <div style="flex:1">
+            <div class="small">Radius rPct (%)</div>
+            <input id="rPct" class="input" type="number" min="1" max="40" value="8" />
+          </div>
+          <button id="copyTarget" class="btn" style="margin-left:auto">📋 target kopieren</button>
+        </div>
+      </div>
+
+      <div class="card" style="flex:1">
+        <h3 class="h">Playlist-Snippets</h3>
+        <div class="small">target</div>
+        <pre class="code" id="codeTarget">{ "x": 0.50, "y": 0.50, "rPct": 8 }</pre>
+        <div class="small" style="margin-top:8px">kompletter Eintrag</div>
+        <pre class="code" id="codeEntry">{
+  "title": "Neue Runde",
+  "imageUrl": "/images/bild1.png",
+  "visibleMs": 4000,
+  "clickRadiusPct": 6,
+  "target": { "x": 0.50, "y": 0.50, "rPct": 8 },
+  "question": "Deine Frage hier"
+}</pre>
+        <button id="copyEntry" class="btn" style="margin-top:8px">📋 Eintrag kopieren</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const stage    = document.getElementById('stage');
+const stageImg = document.getElementById('stageImg');
+const imgUrlIn = document.getElementById('imgUrl');
+const fileIn   = document.getElementById('fileInput');
+const loadBtn  = document.getElementById('loadBtn');
+
+const previewDot  = document.getElementById('previewDot');
+const previewRing = document.getElementById('previewRing');
+const targetRing  = document.getElementById('targetRing');
+
+const x01 = document.getElementById('x01');
+const y01 = document.getElementById('y01');
+const xPct= document.getElementById('xPct');
+const yPct= document.getElementById('yPct');
+const rPct = document.getElementById('rPct');
+
+const codeTarget = document.getElementById('codeTarget');
+const codeEntry  = document.getElementById('codeEntry');
+const copyTarget = document.getElementById('copyTarget');
+const copyEntry  = document.getElementById('copyEntry');
+
+let currentUrl = '';
+let current = { x:0.5, y:0.5, r: Number(rPct.value)||8 };
+
+function loadImageFromUrl(url){
+  currentUrl = url;
+  stageImg.src = url;
+  updateSnippets();
+}
+function loadFromFile(file){
+  const u = URL.createObjectURL(file);
+  loadImageFromUrl(u);
+}
+
+loadBtn.onclick = () => {
+  const url = imgUrlIn.value.trim();
+  if (url) loadImageFromUrl(url);
+};
+fileIn.onchange = (e) => {
+  const f = e.target.files?.[0];
+  if (f) loadFromFile(f);
+};
+
+// Hover-Vorschau
+stage.addEventListener('mousemove', (ev) => {
+  const rect = stageImg.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const nx = (ev.clientX - rect.left) / rect.width;
+  const ny = (ev.clientY - rect.top) / rect.height;
+  const x = clamp(nx,0,1), y = clamp(ny,0,1);
+
+  previewDot.style.display = 'block';
+  previewRing.style.display= 'block';
+  setEl(previewDot, x, y);
+  setRing(previewRing, x, y, current.r);
+});
+
+// Klick setzt Ziel
+stage.addEventListener('click', (ev) => {
+  const rect = stageImg.getBoundingClientRect();
+  const nx = (ev.clientX - rect.left) / rect.width;
+  const ny = (ev.clientY - rect.top) / rect.height;
+  current.x = clamp(nx,0,1);
+  current.y = clamp(ny,0,1);
+  targetRing.style.display = 'block';
+  setRing(targetRing, current.x, current.y, current.r);
+  writeFields(current);
+  updateSnippets();
+});
+
+// Mausrad/+- → Radius verändern
+stage.addEventListener('wheel', (ev) => {
+  ev.preventDefault();
+  current.r = clamp(current.r + (ev.deltaY<0 ? 1 : -1), 1, 40);
+  rPct.value = current.r;
+  setRing(targetRing, current.x, current.y, current.r);
+  setRing(previewRing, current.x, current.y, current.r);
+  updateSnippets();
+}, { passive:false });
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === '+' || e.key === '=') { current.r = clamp(current.r+1,1,40); syncRadius(); }
+  if (e.key === '-') { current.r = clamp(current.r-1,1,40); syncRadius(); }
+});
+
+rPct.oninput = () => {
+  current.r = clamp(Number(rPct.value)||8, 1, 40);
+  setRing(targetRing, current.x, current.y, current.r);
+  setRing(previewRing, current.x, current.y, current.r);
+  updateSnippets();
+};
+
+// Helpers
+function setEl(el, x01, y01){
+  el.style.left = (x01*100)+'%';
+  el.style.top  = (y01*100)+'%';
+}
+function setRing(el, x01, y01, rPct){
+  setEl(el, x01, y01);
+  el.style.width  = (rPct*2)+'%';
+  el.style.height = (rPct*2)+'%';
+}
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+function writeFields({x,y,r}){
+  x01.value = x.toFixed(4); y01.value = y.toFixed(4);
+  xPct.value = (x*100).toFixed(1);
+  yPct.value = (y*100).toFixed(1);
+}
+function updateSnippets(){
+  writeFields(current);
+  const tgt = `{ "x": ${Number(x01.value)}, "y": ${Number(y01.value)}, "rPct": ${current.r} }`;
+  codeTarget.textContent = tgt;
+
+  const img = (imgUrlIn.value.trim() || currentUrl || "/images/bild1.png");
+  const entry = `{
+  "title": "Neue Runde",
+  "imageUrl": "${img}",
+  "visibleMs": 4000,
+  "clickRadiusPct": 6,
+  "target": ${tgt},
+  "question": "Deine Frage hier"
+}`;
+  codeEntry.textContent = entry;
+}
+function syncRadius(){
+  rPct.value = current.r;
+  setRing(targetRing, current.x, current.y, current.r);
+  setRing(previewRing, current.x, current.y, current.r);
+  updateSnippets();
+}
+copyTarget.onclick = async () => {
+  await navigator.clipboard.writeText(codeTarget.textContent);
+  flash(copyTarget);
+};
+copyEntry.onclick = async () => {
+  await navigator.clipboard.writeText(codeEntry.textContent);
+  flash(copyEntry);
+};
+function flash(btn){
+  const old = btn.textContent;
+  btn.textContent = '✅ Kopiert';
+  setTimeout(()=> btn.textContent = old, 900);
+}
+
+// Default: Beispiel setzen
+imgUrlIn.value = "/images/bild1.png";
+updateSnippets();
+</script>
+</body>
+</html>
