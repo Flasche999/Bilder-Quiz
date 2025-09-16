@@ -1,0 +1,24 @@
+[
+  {
+    "title": "Gelber Kreis (Demo)",
+    "imageUrl": "/images/sample.png",
+    "visibleMs": 4000,
+    "clickRadiusPct": 6,
+    "target": {
+      "x": 0.5,
+      "y": 0.5,
+      "rPct": 8
+    }
+  },
+  {
+    "title": "Beispiel 2 – Mittelpunkt links oben",
+    "imageUrl": "/images/sample.png",
+    "visibleMs": 5000,
+    "clickRadiusPct": 8,
+    "target": {
+      "x": 0.25,
+      "y": 0.25,
+      "rPct": 10
+    }
+  }
+]

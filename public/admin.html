@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bildklick-Quiz – Moderator</title>
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1 class="h">Bildklick-Quiz – Moderator</h1>
+    <div class="row">
+      <div class="card" style="flex:2">
+        <h3 class="h">Runde</h3>
+        <div class="grid-2">
+          <div>
+            <div class="small">Bild-URL</div>
+            <input id="imageUrl" class="input" value="/images/sample.png" />
+          </div>
+          <div>
+            <div class="small">Sichtbar (Sek.)</div>
+            <input id="visibleSec" class="input" type="number" value="4" min="1" max="30" />
+          </div>
+          <div>
+            <div class="small">Klick-Radius (%)</div>
+            <input id="clickRadius" class="input" type="number" value="6" min="1" max="40" />
+          </div>
+          <div>
+            <div class="small">Ziel (x%, y%, r%)</div>
+            <div class="row">
+              <input id="tX" class="input" type="number" value="50" min="0" max="100" style="width:90px" />
+              <input id="tY" class="input" type="number" value="50" min="0" max="100" style="width:90px" />
+              <input id="tR" class="input" type="number" value="8"  min="1" max="40" style="width:90px" />
+            </div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="startBtn" class="btn ok">Runde starten</button>
+          <button id="revealBtn" class="btn">Klicks zeigen</button>
+          <button id="judgeBtn" class="btn">Auswerten & Punkte vergeben</button>
+          <button id="nextBtn" class="btn warn">Nächste Runde</button>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="small">Hintergrundmusik-Lautstärke (global)</div>
+          <input id="vol" type="range" min="0" max="1" step="0.01" value="0.5" />
+        </div>
+      </div>
+
+      <div class="card" style="flex:3">
+        <h3 class="h">Moderator-Ansicht</h3>
+        <div class="stage">
+          <img id="stageImg" src="/images/sample.png" alt="Stage" />
+          <!-- Admin sieht nie eine Maske -->
+          <div id="adminClicks"></div>
+        </div>
+        <div class="small" style="margin-top:6px">Klicks werden als Punkte und Ringe angezeigt (nur Moderator).</div>
+      </div>
+
+      <div class="card" style="flex:2">
+        <h3 class="h">Spieler</h3>
+        <table class="tbl" id="playerTable">
+          <thead><tr><th>Name</th><th>Punkte</th><th>Status</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+const socket = io({ query: { role: 'admin' } });
+
+const stageImg   = document.getElementById('stageImg');
+const adminClicks = document.getElementById('adminClicks');
+const tbody      = document.querySelector('#playerTable tbody');
+
+const imageUrl   = document.getElementById('imageUrl');
+const visibleSec = document.getElementById('visibleSec');
+const clickRadius= document.getElementById('clickRadius');
+const tX = document.getElementById('tX');
+const tY = document.getElementById('tY');
+const tR = document.getElementById('tR');
+
+document.getElementById('startBtn').onclick = () => {
+  const cfg = {
+    imageUrl: imageUrl.value.trim(),
+    visibleMs: Math.max(1, Number(visibleSec.value||4)) * 1000,
+    clickRadiusPct: Math.max(1, Number(clickRadius.value||6)),
+    target: {
+      x: (Number(tX.value)||50)/100,
+      y: (Number(tY.value)||50)/100,
+      rPct: Math.max(1, Number(tR.value||8)),
+    },
+  };
+  socket.emit('admin:startRound', cfg, (res) => {
+    // optional: feedback
+  });
+};
+
+document.getElementById('revealBtn').onclick = () => {
+  socket.emit('admin:revealClicks', {}, () => {});
+};
+
+document.getElementById('judgeBtn').onclick = () => {
+  socket.emit('admin:judge', {}, () => {});
+};
+
+document.getElementById('nextBtn').onclick = () => {
+  socket.emit('admin:nextRound', (res) => {});
+};
+
+const vol = document.getElementById('vol');
+vol.oninput = () => socket.emit('admin:setVolume', vol.value);
+
+socket.on('admin:state', (st) => {
+  // Update Tafel
+  if (st.round && st.round.imageUrl) stageImg.src = st.round.imageUrl;
+  vol.value = st.volume ?? 0.5;
+  // clicks zeichnen
+  drawAdminClicks(st);
+  // table
+  tbody.innerHTML = '';
+  (st.players||[]).forEach(p => {
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td'); td1.textContent = p.name;
+    const td2 = document.createElement('td'); td2.textContent = p.score;
+    const td3 = document.createElement('td'); td3.textContent = p.locked ? '✅ gelockt' : '…';
+    tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+    tbody.appendChild(tr);
+  });
+});
+
+function drawAdminClicks(st) {
+  adminClicks.innerHTML = '';
+  if (!st.round) return;
+  const cr = st.round.clickRadiusPct || 6;
+  for (const pid in (st.round.clicks||{})) {
+    const c = st.round.clicks[pid];
+    const dot = document.createElement('div');
+    dot.className = 'click-dot';
+    dot.style.left = (c.x*100)+'%';
+    dot.style.top  = (c.y*100)+'%';
+    adminClicks.appendChild(dot);
+
+    const ring = document.createElement('div');
+    ring.className = 'click-ring';
+    ring.style.left = (c.x*100)+'%';
+    ring.style.top  = (c.y*100)+'%';
+    ring.style.width = (cr*2)+'%';
+    ring.style.height= (cr*2)+'%';
+    adminClicks.appendChild(ring);
+  }
+}
+</script>
+</body>
+</html>
