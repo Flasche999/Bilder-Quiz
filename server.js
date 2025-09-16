@@ -1,5 +1,4 @@
-
-// server.js – Bildklick-Quiz (ESM)
+// server.js – Bildklick-Quiz (ESM) – mit Punkte-History, Runden-Log, Playlist & Fragen
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -18,24 +17,85 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/healthz', (_req, res) => res.status(200).type('text').send('OK'));
 
+// ─────────────────────────────────────────────────────────────
+// Globaler State
+// ─────────────────────────────────────────────────────────────
 let state = {
-  players: {}, // socketId -> { id, name, score, locked: false, click: {x,y} | null }
-  round: null, // see initRound()
-  volume: 0.5,
+  players: {},      // socketId -> { id, name, score, locked, click }
+  round: null,      // aktive Runde (s.u.)
+  volume: 0.5,      // globale Lautstärke (0..1)
+  history: [],      // Punkte-History: [{ts, roundId, playerId, playerName, delta, reason}]
+  roundsLog: [],    // Runden-Log: [{roundId, title, imageUrl, visibleMs, clickRadiusPct, target, clicks:[...], winners:[...]}]
+  playlist: [],     // [{title,imageUrl,visibleMs,clickRadiusPct,target,{question}}]
+  playlistIndex: -1
 };
 
-function initRound({ imageUrl, target, visibleMs, clickRadiusPct }) {
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+function initRound({ imageUrl, target, visibleMs, clickRadiusPct, title = null, question = null }) {
   state.round = {
     id: Date.now(),
+    title,
     imageUrl,
-    target,            // {x:0-1,y:0-1,rPct:0-100} (Zielbereich)
-    visibleMs,         // Sichtbarkeitszeit für Spieler
-    clickRadiusPct,    // Klick-Radius (Anzeige & Reveal)
+    target,            // {x:0-1, y:0-1, rPct:1..40}
+    visibleMs,         // Sichtbarkeit in ms
+    clickRadiusPct,    // Anzeige/Reveal-Radius in %
     started: true,
-    masked: true,      // Spieler bekommen nach Ablauf eine schwarze Maske
-    revealed: false,   // Moderator kann später Klickfenster offenbaren
+    masked: true,      // Spieler erhalten nach Ablauf eine schwarze Maske
+    revealed: false,   // Klickfenster global offenbart?
     clicks: {},        // playerId -> {x,y,locked}
+    question: question ? String(question).slice(0,200) : null, // gespeicherte Frage der Runde
+    showTarget: false  // Zielkreis bei Spielern anzeigen?
   };
+}
+
+function judgeRoundAndAward() {
+  if (!state.round) return { winners: [] };
+  const { target } = state.round;
+  const winners = [];
+  const clicksArray = [];
+
+  for (const pid of Object.keys(state.round.clicks)) {
+    const c = state.round.clicks[pid];
+    const dx = c.x - target.x;
+    const dy = c.y - target.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const inTarget = dist <= (target.rPct/100);
+
+    clicksArray.push({
+      playerId: pid,
+      name: state.players[pid]?.name || 'Spieler',
+      x: c.x, y: c.y, hit: inTarget
+    });
+
+    if (inTarget && state.players[pid]) {
+      state.players[pid].score += 5;
+      winners.push(pid);
+      state.history.push({
+        ts: Date.now(),
+        roundId: state.round.id,
+        playerId: pid,
+        playerName: state.players[pid].name,
+        delta: +5,
+        reason: 'Treffer im Zielbereich'
+      });
+    }
+  }
+
+  // Runden-Log-Eintrag
+  state.roundsLog.push({
+    roundId: state.round.id,
+    title: state.round.title,
+    imageUrl: state.round.imageUrl,
+    visibleMs: state.round.visibleMs,
+    clickRadiusPct: state.round.clickRadiusPct,
+    target: state.round.target,
+    clicks: clicksArray,
+    winners
+  });
+
+  return { winners };
 }
 
 function broadcastAdminState() {
@@ -46,33 +106,55 @@ function broadcastAdminState() {
     locked: !!p.locked,
     click: p.click || null,
   }));
+
+  const historyTail = state.history.slice(-50);
+  const roundsTail  = state.roundsLog.slice(-20);
+
   io.to('admins').emit('admin:state', {
     players,
     round: state.round,
     volume: state.volume,
+    history: historyTail,
+    roundsLog: roundsTail,
+    playlist: state.playlist,
+    playlistIndex: state.playlistIndex
   });
 }
 
+// ─────────────────────────────────────────────────────────────
+// Socket.IO
+// ─────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   const role = socket.handshake.query.role || 'player';
 
+  // ====================== ADMIN ======================
   if (role === 'admin') {
     socket.join('admins');
-    // Sofort Status schicken
     broadcastAdminState();
 
+    // Manuell konfigurierte Runde starten
     socket.on('admin:startRound', (cfg, ack) => {
-      const { imageUrl, target, visibleMs, clickRadiusPct } = cfg;
-      initRound({ imageUrl, target, visibleMs, clickRadiusPct });
+      const { imageUrl, target, visibleMs, clickRadiusPct, title, question } = cfg;
+      initRound({ imageUrl, target, visibleMs, clickRadiusPct, title, question: question || null });
+
       // Reset aller Klicks & Locks
       Object.values(state.players).forEach(p => { p.locked = false; p.click = null; });
-      io.emit('round:started', { 
-        imageUrl, visibleMs, clickRadiusPct, roundId: state.round.id 
+
+      // Beim Start Frage und Zielanzeige noch nicht anzeigen
+      state.round.question = state.round.question || null;
+      state.round.showTarget = false;
+
+      io.emit('round:started', {
+        imageUrl,
+        visibleMs,
+        clickRadiusPct,
+        roundId: state.round.id
       });
       broadcastAdminState();
       ack && ack({ ok: true });
     });
 
+    // Klicks global offenbaren (Reveal-Fenster)
     socket.on('admin:revealClicks', (_void, ack) => {
       if (!state.round) return;
       state.round.revealed = true;
@@ -84,35 +166,22 @@ io.on('connection', (socket) => {
       ack && ack({ ok: true });
     });
 
+    // Auswerten & Punkte vergeben (+5 in Zielkreis) – schreibt in History & Runden-Log
     socket.on('admin:judge', (_void, ack) => {
       if (!state.round) return;
-      const { target } = state.round;
-      const winners = [];
-      for (const pid of Object.keys(state.round.clicks)) {
-        const c = state.round.clicks[pid];
-        const dx = c.x - target.x;
-        const dy = c.y - target.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        const inTarget = dist <= (target.rPct/100); // Vergleich mit Prozent-Radius
-        if (inTarget) {
-          if (state.players[pid]) {
-            state.players[pid].score += 5;
-            winners.push(pid);
-          }
-        }
-      }
-      // Reveal erzwingen
+      const { winners } = judgeRoundAndAward();
       state.round.revealed = true;
       io.emit('round:judged', {
         winners,
         clicks: state.round.clicks,
         clickRadiusPct: state.round.clickRadiusPct,
-        target,
+        target: state.round.target,
       });
       broadcastAdminState();
       ack && ack({ ok: true, winners });
     });
 
+    // Nächste Runde (Reset der Anzeigen)
     socket.on('admin:nextRound', (ack) => {
       if (state.round) {
         state.round.started = false;
@@ -122,20 +191,112 @@ io.on('connection', (socket) => {
       ack && ack({ ok: true });
     });
 
+    // Globale Lautstärke
     socket.on('admin:setVolume', (vol) => {
       state.volume = Math.max(0, Math.min(1, Number(vol)||0));
       io.emit('volume:update', state.volume);
       broadcastAdminState();
     });
 
-    socket.on('disconnect', () => {
-      // Admin weg – nix zu tun
+    // ───── Fragen/Anweisung ─────
+    // Manuell eingegebene Frage anzeigen
+    socket.on('admin:showQuestion', (text, ack) => {
+      if (!state.round) return ack && ack({ok:false});
+      state.round.question = String(text||'').slice(0,200);
+      io.emit('round:question', { text: state.round.question });
+      broadcastAdminState();
+      ack && ack({ ok:true });
     });
 
-    return; // admin handler end
+    // Frage aus der aktuell laufenden Runde (z. B. aus Playlist) anzeigen
+    socket.on('admin:showQuestionFromRound', (_void, ack) => {
+      if (!state.round) return ack && ack({ok:false});
+      const text = state.round?.question || '';
+      io.emit('round:question', { text });
+      broadcastAdminState();
+      ack && ack({ ok:true });
+    });
+
+    // Zielkreis an/aus
+    socket.on('admin:toggleTarget', (show, ack) => {
+      if (!state.round) return ack && ack({ok:false});
+      state.round.showTarget = !!show;
+      io.emit('round:showTarget', { show: state.round.showTarget, target: state.round.target });
+      broadcastAdminState();
+      ack && ack({ ok:true });
+    });
+
+    // ───── Playlist ─────
+    // Playlist laden/setzen
+    socket.on('admin:setPlaylist', (list, ack) => {
+      if (Array.isArray(list)) {
+        state.playlist = list.map((it, i) => ({
+          title: String(it.title||`Bild ${i+1}`),
+          imageUrl: String(it.imageUrl||''),
+          visibleMs: Number(it.visibleMs)||4000,
+          clickRadiusPct: Number(it.clickRadiusPct)||6,
+          target: {
+            x: Number(it.target?.x) || 0.5,
+            y: Number(it.target?.y) || 0.5,
+            rPct: Number(it.target?.rPct) || 8
+          },
+          question: it.question ? String(it.question).slice(0,200) : null
+        }));
+        state.playlistIndex = state.playlist.length ? 0 : -1;
+        broadcastAdminState();
+        ack && ack({ ok:true, count: state.playlist.length });
+      } else {
+        ack && ack({ ok:false, msg:'Ungültige Playlist' });
+      }
+    });
+
+    // Auswahl im Dropdown setzen
+    socket.on('admin:setPlaylistIndex', (idx, ack) => {
+      const n = Number(idx);
+      if (Number.isInteger(n) && n >= 0 && n < state.playlist.length) {
+        state.playlistIndex = n;
+        broadcastAdminState();
+        ack && ack({ ok:true });
+      } else {
+        ack && ack({ ok:false });
+      }
+    });
+
+    // Aus der Playlist starten (Frage wird gespeichert, aber erst per Button gezeigt)
+    socket.on('admin:startFromPlaylist', (ack) => {
+      if (state.playlistIndex < 0 || state.playlistIndex >= state.playlist.length) {
+        return ack && ack({ ok:false, msg:'Keine gültige Auswahl' });
+      }
+      const cfg = state.playlist[state.playlistIndex];
+      initRound(cfg); // enthält ggf. question
+      Object.values(state.players).forEach(p => { p.locked = false; p.click = null; });
+
+      // Beim Start Frage nicht automatisch anzeigen; Ziel ebenfalls aus
+      state.round.showTarget = false;
+
+      io.emit('round:started', {
+        imageUrl: cfg.imageUrl,
+        visibleMs: cfg.visibleMs,
+        clickRadiusPct: cfg.clickRadiusPct,
+        roundId: state.round.id
+      });
+      broadcastAdminState();
+      ack && ack({ ok:true });
+    });
+
+    // Nächstes in der Playlist auswählen (wrap-around)
+    socket.on('admin:nextInPlaylist', (ack) => {
+      if (state.playlist.length === 0) return ack && ack({ ok:false });
+      state.playlistIndex = (state.playlistIndex + 1) % state.playlist.length;
+      broadcastAdminState();
+      ack && ack({ ok:true, index: state.playlistIndex });
+    });
+
+    socket.on('disconnect', () => { /* Admin weg – nichts weiter */ });
+    return; // Ende Admin
   }
 
-  // PLAYER
+  // ====================== PLAYER ======================
   state.players[socket.id] = {
     id: socket.id,
     name: 'Spieler ' + socket.id.slice(0,4),
@@ -158,16 +319,12 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('player:preview', ({x,y}) => {
-    // Vorschau wird clientseitig gehandhabt; Server speichert nicht
-  });
-
+  // „Eingabe“ (Lock) des Spielers: speichert Klick, sendet Self-Reveal nur an diesen Spieler
   socket.on('player:lock', ({x,y}, ack) => {
     const p = state.players[socket.id];
     if (!p || !state.round) return;
     if (p.locked) return ack && ack({ ok:false, msg:'Schon gelockt' });
 
-    // Nur innerhalb [0,1] akzeptieren
     const nx = Math.max(0, Math.min(1, Number(x)||0));
     const ny = Math.max(0, Math.min(1, Number(y)||0));
 
@@ -175,9 +332,11 @@ io.on('connection', (socket) => {
     p.click  = { x:nx, y:ny };
     state.round.clicks[socket.id] = { x:nx, y:ny, locked:true };
 
-    // Den Spielern zeigen wir nur ihren eigenen Lock
+    // Bestätigung + eigener Reveal-Kreis (bleibt bis Rundenende sichtbar – nur für diesen Spieler)
     socket.emit('player:locked', p.click);
-    // Dem Admin vollständigen Status
+    const cr = state.round.clickRadiusPct || 6;
+    socket.emit('player:selfReveal', { click: p.click, clickRadiusPct: cr });
+
     broadcastAdminState();
     ack && ack({ ok:true });
   });
@@ -189,6 +348,9 @@ io.on('connection', (socket) => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────
+// Serverstart
+// ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
   console.log('Server listening on :' + PORT);
