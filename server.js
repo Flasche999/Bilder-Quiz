@@ -1,8 +1,9 @@
-// server.js – Bildklick-Quiz (ESM) – Auto-Lock, Click-freigabe nach Dunkelphase, History/Log/Playlist/Frage/Ziel
+// server.js – Bildklick-Quiz (ESM) – Auto-Lock, Click-freigabe nach Dunkelphase, History/Log/Playlist/Frage/Ziel + robuste Bildpfade
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +19,21 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/healthz', (_req, res) => res.status(200).type('text').send('OK'));
 
 // ─────────────────────────────────────────────────────────────
+// Helpers für robuste Bildpfade
+// ─────────────────────────────────────────────────────────────
+function normUrl(u) {
+  if (!u) return '';
+  const s = String(u).trim();
+  if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  return s.startsWith('/') ? s : '/' + s; // stelle führenden Slash sicher
+}
+function fileExistsUnderPublic(absUrl) {
+  if (!absUrl || absUrl.startsWith('http')) return true; // externe URLs nicht prüfen
+  const filePath = path.join(__dirname, 'public', absUrl.replace(/^\//,''));
+  try { return fs.existsSync(filePath); } catch { return false; }
+}
+
+// ─────────────────────────────────────────────────────────────
 // Globaler State
 // ─────────────────────────────────────────────────────────────
 let state = {
@@ -31,13 +47,14 @@ let state = {
 };
 
 // ─────────────────────────────────────────────────────────────
-// Helpers
+// Round-Init & Bewertung
 // ─────────────────────────────────────────────────────────────
 function initRound({ imageUrl, target, visibleMs, clickRadiusPct, title = null, question = null }) {
+  const img = normUrl(imageUrl);
   state.round = {
     id: Date.now(),
     title,
-    imageUrl,
+    imageUrl: img,
     target,             // {x:0..1, y:0..1, rPct:1..40}
     visibleMs,          // Bild sichtbar (ms), danach schwarz
     clickRadiusPct,     // Reveal-Radius in %
@@ -144,8 +161,12 @@ io.on('connection', (socket) => {
 
     // Manuell konfigurierte Runde starten
     socket.on('admin:startRound', (cfg, ack) => {
-      const { imageUrl, target, visibleMs, clickRadiusPct, title, question } = cfg;
-      initRound({ imageUrl, target, visibleMs, clickRadiusPct, title, question: question || null });
+      let { imageUrl, target, visibleMs, clickRadiusPct, title, question } = cfg;
+      const img = normUrl(imageUrl);
+      if (!fileExistsUnderPublic(img)) {
+        console.warn('[admin:startRound] Bild nicht gefunden:', img);
+      }
+      initRound({ imageUrl: img, target, visibleMs, clickRadiusPct, title, question: question || null });
 
       // Reset aller Klicks & Locks
       Object.values(state.players).forEach(p => { p.locked = false; p.click = null; });
@@ -154,7 +175,7 @@ io.on('connection', (socket) => {
       state.round.showTarget = false;
 
       io.emit('round:started', {
-        imageUrl,
+        imageUrl: img,
         visibleMs,
         clickRadiusPct,
         roundId: state.round.id
@@ -169,13 +190,9 @@ io.on('connection', (socket) => {
       state.round.revealed = true;
 
       const cr = state.round.clickRadiusPct;
-      // Jeder Spieler bekommt NUR seinen eigenen Klickradius
       for (const pid of Object.keys(state.players)) {
         const click = state.round.clicks[pid] || null;
-        io.to(pid).emit('round:revealSelf', {
-          click,
-          clickRadiusPct: cr
-        });
+        io.to(pid).emit('round:revealSelf', { click, clickRadiusPct: cr });
       }
 
       broadcastAdminState();
@@ -240,18 +257,24 @@ io.on('connection', (socket) => {
     // Playlist steuern
     socket.on('admin:setPlaylist', (list, ack) => {
       if (Array.isArray(list)) {
-        state.playlist = list.map((it, i) => ({
-          title: String(it.title||`Bild ${i+1}`),
-          imageUrl: String(it.imageUrl||''),
-          visibleMs: Number(it.visibleMs)||4000,
-          clickRadiusPct: Number(it.clickRadiusPct)||6,
-          target: {
-            x: Number(it.target?.x) || 0.5,
-            y: Number(it.target?.y) || 0.5,
-            rPct: Number(it.target?.rPct) || 8
-          },
-          question: it.question ? String(it.question).slice(0,200) : null
-        }));
+        state.playlist = list.map((it, i) => {
+          const img = normUrl(String(it.imageUrl||''));
+          if (!fileExistsUnderPublic(img)) {
+            console.warn('[playlist] Bild nicht gefunden:', img);
+          }
+          return {
+            title: String(it.title||`Bild ${i+1}`),
+            imageUrl: img,
+            visibleMs: Number(it.visibleMs)||4000,
+            clickRadiusPct: Number(it.clickRadiusPct)||6,
+            target: {
+              x: Number(it.target?.x) || 0.5,
+              y: Number(it.target?.y) || 0.5,
+              rPct: Number(it.target?.rPct) || 8
+            },
+            question: it.question ? String(it.question).slice(0,200) : null
+          };
+        });
         state.playlistIndex = state.playlist.length ? 0 : -1;
         broadcastAdminState();
         ack && ack({ ok:true, count: state.playlist.length });
@@ -276,11 +299,15 @@ io.on('connection', (socket) => {
         return ack && ack({ ok:false, msg:'Keine gültige Auswahl' });
       }
       const cfg = state.playlist[state.playlistIndex];
-      initRound(cfg); // enthält ggf. question
+      const img = normUrl(cfg.imageUrl);
+      if (!fileExistsUnderPublic(img)) {
+        console.warn('[startFromPlaylist] Bild nicht gefunden:', img);
+      }
+      initRound({ ...cfg, imageUrl: img });
       Object.values(state.players).forEach(p => { p.locked = false; p.click = null; });
       state.round.showTarget = false;
       io.emit('round:started', {
-        imageUrl: cfg.imageUrl,
+        imageUrl: img,
         visibleMs: cfg.visibleMs,
         clickRadiusPct: cfg.clickRadiusPct,
         roundId: state.round.id
