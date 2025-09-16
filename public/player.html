@@ -48,9 +48,6 @@
 
         <div class="row" style="margin-top:10px">
           <div class="small" id="hint">Warte auf Start…</div>
-          <div style="margin-left:auto">
-            <button id="lockBtn" class="btn ok" disabled>✅ Eingabe</button>
-          </div>
         </div>
       </div>
 
@@ -85,11 +82,10 @@ const targetRing = document.getElementById('targetRing');
 
 const previewDot  = document.getElementById('previewDot');
 const previewRing = document.getElementById('previewRing');
-const lockBtn = document.getElementById('lockBtn');
 const hint   = document.getElementById('hint');
 
 let clickRadiusPct = 6;
-let canClick = false;
+let canClick = false;  // ← neu: erst wenn Server freigibt
 let locked = false;
 let localMute = false;
 
@@ -124,9 +120,8 @@ socket.on('round:started', (r) => {
   stageImg.src = r.imageUrl;
   clickRadiusPct = r.clickRadiusPct || 6;
   locked = false;
-  canClick = true;
-  lockBtn.disabled = false;
-  hint.textContent = "Bild sichtbar – wähle deinen Punkt und drücke 'Eingabe'!";
+  canClick = false; // erst nach Server-Signal
+  hint.textContent = "Bild sichtbar … gleich wird es schwarz.";
   revealLayer.innerHTML = '';
   previewDot.style.display = 'none';
   previewRing.style.display= 'none';
@@ -134,11 +129,17 @@ socket.on('round:started', (r) => {
   targetRing.style.display = 'none';
   mask.classList.add('hidden'); // sichtbar
 
-  // nach sichtbarer Zeit -> Maske drüber
+  // Nach Sichtzeit verdecken – Hinweis wird danach vom Server freigegeben
   setTimeout(() => {
     mask.classList.remove('hidden'); // schwarz
-    hint.textContent = "Bild verdeckt. Du kannst noch klicken, falls noch nicht gelockt.";
   }, r.visibleMs || 3000);
+});
+
+// Server gibt Klicken frei (nach Dunkelphase)
+socket.on('round:allowClicks', () => {
+  if (locked) return;
+  canClick = true;
+  hint.textContent = "Bild verdeckt – jetzt einmal klicken zum Festlegen!";
 });
 
 socket.on('round:reveal', ({ clicks, clickRadiusPct }) => {
@@ -154,7 +155,6 @@ socket.on('round:judged', ({ winners, clicks, clickRadiusPct, target }) => {
 socket.on('round:reset', () => {
   revealLayer.innerHTML = '';
   hint.textContent = "Warte auf Start…";
-  lockBtn.disabled = true;
   canClick = false;
   locked = false;
   previewDot.style.display = 'none';
@@ -187,7 +187,7 @@ socket.on('round:showTarget', ({ show, target }) => {
   }
 });
 
-// Eigener Revealkreis nach Eingabe (nur für dich sichtbar)
+// Eigener Revealkreis nach Auto-Lock (nur für dich sichtbar)
 socket.on('player:selfReveal', ({ click, clickRadiusPct }) => {
   const div = document.createElement('div');
   div.className = 'reveal-window';
@@ -227,24 +227,26 @@ stage.addEventListener('mousemove', (ev) => {
   previewRing.style.height= (clickRadiusPct*2)+'%';
 });
 
+// Auto-Lock: ein Klick = speichern
 stage.addEventListener('click', (ev) => {
   if (!canClick || locked) return;
-  // nur Vorschau, echte Speicherung erst bei "Eingabe"
-});
-
-lockBtn.onclick = () => {
-  if (!canClick || locked) return;
-  const leftPct = parseFloat(previewDot.style.left||'50%')/100;
-  const topPct  = parseFloat(previewDot.style.top ||'50%')/100;
-  socket.emit('player:lock', { x:leftPct, y:topPct }, (res) => {
+  const rect = stage.getBoundingClientRect();
+  const nx = (ev.clientX - rect.left) / rect.width;
+  const ny = (ev.clientY - rect.top) / rect.height;
+  const x = Math.max(0, Math.min(1, nx));
+  const y = Math.max(0, Math.min(1, ny));
+  socket.emit('player:lock', { x, y }, (res) => {
     if (res && res.ok) {
       locked = true;
       canClick = false;
-      lockBtn.disabled = true;
-      hint.textContent = "Eingabe gelockt – warte auf Auswertung.";
+      // Hinweis bleibt – eigener Revealkreis kommt per 'player:selfReveal'
+    } else if (res && res.msg === 'Noch nicht freigegeben') {
+      // Falls Client zu früh sendet (Race), sperre weiterhin:
+      canClick = false;
+      hint.textContent = "Noch nicht freigegeben…";
     }
   });
-};
+});
 </script>
 </body>
 </html>
