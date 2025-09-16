@@ -71,21 +71,19 @@ document.getElementById('saveName').onclick = () => {
   socket.emit('player:setName', nameInput.value.trim());
 };
 
-// Stage
+// Stage/DOM
 const stage = document.getElementById('stage');
 const stageImg = document.getElementById('stageImg');
 const mask  = document.getElementById('mask');
 const revealLayer = document.getElementById('revealLayer');
-
 const questionOverlay = document.getElementById('questionOverlay');
 const targetRing = document.getElementById('targetRing');
-
 const previewDot  = document.getElementById('previewDot');
 const previewRing = document.getElementById('previewRing');
 const hint   = document.getElementById('hint');
 
 let clickRadiusPct = 6;
-let canClick = false;  // ← neu: erst wenn Server freigibt
+let canClick = false;   // erst wenn Server freigibt
 let locked = false;
 let localMute = false;
 
@@ -98,29 +96,24 @@ document.getElementById('muteBtn').onclick = () => {
   updateVolume();
   document.getElementById('muteBtn').textContent = localMute ? "🔈 Entstummen" : "🔇 Stumm";
 };
-
 let globalVolume = 0.5;
-function updateVolume() {
-  bgm.volume = localMute ? 0 : globalVolume;
-}
+function updateVolume() { bgm.volume = localMute ? 0 : globalVolume; }
+socket.on('volume:update', (v) => { globalVolume = Number(v)||0; updateVolume(); });
 
-socket.on('volume:update', (v) => {
-  globalVolume = Number(v)||0;
-  updateVolume();
-});
-
+// Hallo/Init
 socket.on('hello', (st) => {
   if (st.round && st.round.imageUrl) stageImg.src = st.round.imageUrl;
   globalVolume = st.volume ?? 0.5;
   updateVolume();
 });
 
-// Round flow
+// Runde startet
 socket.on('round:started', (r) => {
   stageImg.src = r.imageUrl;
   clickRadiusPct = r.clickRadiusPct || 6;
   locked = false;
-  canClick = false; // erst nach Server-Signal
+  canClick = false;               // erst nach Server-Signal
+  stage.classList.remove('clickable');
   hint.textContent = "Bild sichtbar … gleich wird es schwarz.";
   revealLayer.innerHTML = '';
   previewDot.style.display = 'none';
@@ -129,34 +122,48 @@ socket.on('round:started', (r) => {
   targetRing.style.display = 'none';
   mask.classList.add('hidden'); // sichtbar
 
-  // Nach Sichtzeit verdecken – Hinweis wird danach vom Server freigegeben
   setTimeout(() => {
     mask.classList.remove('hidden'); // schwarz
   }, r.visibleMs || 3000);
 });
 
-// Server gibt Klicken frei (nach Dunkelphase)
+// Server erlaubt Klicks (nach Dunkelphase)
 socket.on('round:allowClicks', () => {
   if (locked) return;
   canClick = true;
+  stage.classList.add('clickable');
   hint.textContent = "Bild verdeckt – jetzt einmal klicken zum Festlegen!";
 });
 
-socket.on('round:reveal', ({ clicks, clickRadiusPct }) => {
-  showReveals(clicks, clickRadiusPct);
+// NUR eigenen Klickradius zeigen, wenn Admin „Klicks zeigen“ drückt
+socket.on('round:revealSelf', ({ click, clickRadiusPct }) => {
+  revealLayer.innerHTML = '';
+  if (!click) return;
+  const r = (clickRadiusPct || 6);
+  const div = document.createElement('div');
+  div.className = 'reveal-window';
+  div.style.clipPath = `circle(${r}% at ${click.x*100}% ${click.y*100}%)`;
+  revealLayer.appendChild(div);
 });
 
+// Auswertung: alle Klickbereiche für alle sichtbar
 socket.on('round:judged', ({ winners, clicks, clickRadiusPct, target }) => {
   showReveals(clicks, clickRadiusPct);
   const youWin = (winners||[]).includes(socket.id);
   hint.textContent = youWin ? "✅ Treffer! +5 Punkte" : "❌ Leider daneben.";
 });
 
+// (optional, falls Server noch ein altes round:reveal sendet – hier ignorierbar oder minimal nutzen)
+// socket.on('round:reveal', ({ clicks, clickRadiusPct }) => {
+//   // nicht verwenden, da „revealSelf“ nun pro Spieler geschickt wird
+// });
+
 socket.on('round:reset', () => {
   revealLayer.innerHTML = '';
   hint.textContent = "Warte auf Start…";
   canClick = false;
   locked = false;
+  stage.classList.remove('clickable');
   previewDot.style.display = 'none';
   previewRing.style.display= 'none';
   questionOverlay.style.display = 'none';
@@ -164,7 +171,7 @@ socket.on('round:reset', () => {
   mask.classList.remove('hidden'); // bleibt schwarz bis nächste Runde
 });
 
-// Frage/Anweisung vom Moderator
+// Frage/Anweisung
 socket.on('round:question', ({ text }) => {
   if (text && text.length) {
     questionOverlay.style.display = 'block';
@@ -174,7 +181,7 @@ socket.on('round:question', ({ text }) => {
   }
 });
 
-// Zielkreis an/aus vom Moderator
+// Zielkreis an/aus
 socket.on('round:showTarget', ({ show, target }) => {
   if (show && target) {
     targetRing.style.display = 'block';
@@ -187,7 +194,7 @@ socket.on('round:showTarget', ({ show, target }) => {
   }
 });
 
-// Eigener Revealkreis nach Auto-Lock (nur für dich sichtbar)
+// Eigener Revealkreis direkt nach Auto-Lock (Sofort-Feedback)
 socket.on('player:selfReveal', ({ click, clickRadiusPct }) => {
   const div = document.createElement('div');
   div.className = 'reveal-window';
@@ -195,6 +202,7 @@ socket.on('player:selfReveal', ({ click, clickRadiusPct }) => {
   revealLayer.appendChild(div);
 });
 
+// Hilfsfunktion: alle Klicks offenlegen (für 'judged')
 function showReveals(clicks, cr) {
   revealLayer.innerHTML = '';
   for (const pid in clicks) {
@@ -209,7 +217,7 @@ function showReveals(clicks, cr) {
   }
 }
 
-// Maus-Interaktion (Vorschau)
+// Maus-Vorschau
 stage.addEventListener('mousemove', (ev) => {
   if (!canClick || locked) return;
   const rect = stage.getBoundingClientRect();
@@ -227,7 +235,7 @@ stage.addEventListener('mousemove', (ev) => {
   previewRing.style.height= (clickRadiusPct*2)+'%';
 });
 
-// Auto-Lock: ein Klick = speichern
+// Auto-Lock: ein Klick = speichern (nur erlaubt nach Freigabe)
 stage.addEventListener('click', (ev) => {
   if (!canClick || locked) return;
   const rect = stage.getBoundingClientRect();
@@ -239,10 +247,11 @@ stage.addEventListener('click', (ev) => {
     if (res && res.ok) {
       locked = true;
       canClick = false;
-      // Hinweis bleibt – eigener Revealkreis kommt per 'player:selfReveal'
+      stage.classList.remove('clickable');
+      // Eigener Revealkreis kommt per 'player:selfReveal'
     } else if (res && res.msg === 'Noch nicht freigegeben') {
-      // Falls Client zu früh sendet (Race), sperre weiterhin:
       canClick = false;
+      stage.classList.remove('clickable');
       hint.textContent = "Noch nicht freigegeben…";
     }
   });
