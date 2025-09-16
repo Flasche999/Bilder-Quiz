@@ -1,8 +1,8 @@
 {
-  "title": "fc bayern logo",
+  "title": "Neue Runde",
   "imageUrl": "/images/bild1.png",
   "visibleMs": 20000,
   "clickRadiusPct": 6,
-  "target": { "x": 0.5091, "y": 0.148, "rPct": 5 },
-  "question": "KLICKE AUF DEN MITTIGEN STERN"
+  "target": { "x": 0.5091, "y": 0.1534, "rPct": 6 },
+  "question": "Deine Frage hier"
 }
