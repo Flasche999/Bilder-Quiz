@@ -2,6 +2,7 @@
   "name": "bilder-quiz",
   "version": "1.0.0",
   "description": "Bildklick-Quiz mit Express und Socket.IO",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -9,5 +10,8 @@
   "dependencies": {
     "express": "^4.18.2",
     "socket.io": "^4.8.1"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }
