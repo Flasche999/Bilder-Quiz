@@ -29,7 +29,19 @@
         <div class="stage" id="stage">
           <img id="stageImg" src="/images/sample.png" />
           <div id="mask" class="mask"></div>
+
+          <!-- Sichtfenster (Reveals) -->
           <div id="revealLayer"></div>
+
+          <!-- Frage/Anweisung vom Moderator -->
+          <div id="questionOverlay"
+               style="position:absolute;left:0;right:0;top:0;padding:8px 12px;
+                      background:rgba(0,0,0,.6);font-weight:600;display:none"></div>
+
+          <!-- Zielkreis (ein/aus vom Moderator) -->
+          <div id="targetRing" class="click-ring" style="display:none"></div>
+
+          <!-- Vorschau des eigenen Klicks -->
           <div id="previewDot" class="click-dot" style="display:none"></div>
           <div id="previewRing" class="click-ring" style="display:none"></div>
         </div>
@@ -67,6 +79,10 @@ const stage = document.getElementById('stage');
 const stageImg = document.getElementById('stageImg');
 const mask  = document.getElementById('mask');
 const revealLayer = document.getElementById('revealLayer');
+
+const questionOverlay = document.getElementById('questionOverlay');
+const targetRing = document.getElementById('targetRing');
+
 const previewDot  = document.getElementById('previewDot');
 const previewRing = document.getElementById('previewRing');
 const lockBtn = document.getElementById('lockBtn');
@@ -114,6 +130,8 @@ socket.on('round:started', (r) => {
   revealLayer.innerHTML = '';
   previewDot.style.display = 'none';
   previewRing.style.display= 'none';
+  questionOverlay.style.display = 'none';
+  targetRing.style.display = 'none';
   mask.classList.add('hidden'); // sichtbar
 
   // nach sichtbarer Zeit -> Maske drüber
@@ -129,7 +147,6 @@ socket.on('round:reveal', ({ clicks, clickRadiusPct }) => {
 
 socket.on('round:judged', ({ winners, clicks, clickRadiusPct, target }) => {
   showReveals(clicks, clickRadiusPct);
-  // optional Hinweis
   const youWin = (winners||[]).includes(socket.id);
   hint.textContent = youWin ? "✅ Treffer! +5 Punkte" : "❌ Leider daneben.";
 });
@@ -142,12 +159,44 @@ socket.on('round:reset', () => {
   locked = false;
   previewDot.style.display = 'none';
   previewRing.style.display= 'none';
+  questionOverlay.style.display = 'none';
+  targetRing.style.display = 'none';
   mask.classList.remove('hidden'); // bleibt schwarz bis nächste Runde
+});
+
+// Frage/Anweisung vom Moderator
+socket.on('round:question', ({ text }) => {
+  if (text && text.length) {
+    questionOverlay.style.display = 'block';
+    questionOverlay.textContent = text;
+  } else {
+    questionOverlay.style.display = 'none';
+  }
+});
+
+// Zielkreis an/aus vom Moderator
+socket.on('round:showTarget', ({ show, target }) => {
+  if (show && target) {
+    targetRing.style.display = 'block';
+    targetRing.style.left = (target.x*100)+'%';
+    targetRing.style.top  = (target.y*100)+'%';
+    targetRing.style.width = (target.rPct*2)+'%';
+    targetRing.style.height= (target.rPct*2)+'%';
+  } else {
+    targetRing.style.display = 'none';
+  }
+});
+
+// Eigener Revealkreis nach Eingabe (nur für dich sichtbar)
+socket.on('player:selfReveal', ({ click, clickRadiusPct }) => {
+  const div = document.createElement('div');
+  div.className = 'reveal-window';
+  div.style.clipPath = `circle(${clickRadiusPct}% at ${click.x*100}% ${click.y*100}%)`;
+  revealLayer.appendChild(div);
 });
 
 function showReveals(clicks, cr) {
   revealLayer.innerHTML = '';
-  // Rest bleibt schwarz, wir schneiden nur Kreise aus
   for (const pid in clicks) {
     const c = clicks[pid];
     const x = c.x*100;
@@ -160,7 +209,7 @@ function showReveals(clicks, cr) {
   }
 }
 
-// Maus-Interaktion
+// Maus-Interaktion (Vorschau)
 stage.addEventListener('mousemove', (ev) => {
   if (!canClick || locked) return;
   const rect = stage.getBoundingClientRect();
@@ -185,8 +234,6 @@ stage.addEventListener('click', (ev) => {
 
 lockBtn.onclick = () => {
   if (!canClick || locked) return;
-  // Letzte bekannte Position aus previewDot ableiten
-  const rect = stage.getBoundingClientRect();
   const leftPct = parseFloat(previewDot.style.left||'50%')/100;
   const topPct  = parseFloat(previewDot.style.top ||'50%')/100;
   socket.emit('player:lock', { x:leftPct, y:topPct }, (res) => {
