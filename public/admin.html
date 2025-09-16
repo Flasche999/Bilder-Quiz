@@ -10,14 +10,21 @@
 <body>
   <div class="container">
     <h1 class="h">Bildklick-Quiz – Moderator</h1>
+
     <div class="row">
+      <!-- RUNDEN-STEUERUNG (manuell) -->
       <div class="card" style="flex:2">
-        <h3 class="h">Runde</h3>
+        <h3 class="h">Runde (manuell)</h3>
         <div class="grid-2">
+          <div>
+            <div class="small">Titel</div>
+            <input id="title" class="input" placeholder="z.B. Zahlenrätsel – '8' finden" />
+          </div>
           <div>
             <div class="small">Bild-URL</div>
             <input id="imageUrl" class="input" value="/images/sample.png" />
           </div>
+
           <div>
             <div class="small">Sichtbar (Sek.)</div>
             <input id="visibleSec" class="input" type="number" value="4" min="1" max="30" />
@@ -26,6 +33,7 @@
             <div class="small">Klick-Radius (%)</div>
             <input id="clickRadius" class="input" type="number" value="6" min="1" max="40" />
           </div>
+
           <div>
             <div class="small">Ziel (x%, y%, r%)</div>
             <div class="row">
@@ -35,11 +43,19 @@
             </div>
           </div>
         </div>
+
         <div class="row" style="margin-top:10px">
           <button id="startBtn" class="btn ok">Runde starten</button>
           <button id="revealBtn" class="btn">Klicks zeigen</button>
           <button id="judgeBtn" class="btn">Auswerten & Punkte vergeben</button>
           <button id="nextBtn" class="btn warn">Nächste Runde</button>
+        </div>
+
+        <div class="row" style="margin-top:10px">
+          <input id="questionText" class="input" placeholder="Frage/Anweisung z. B.: Klick auf die Zahl 8" style="flex:1" />
+          <button id="showQuestionBtn" class="btn">Frage anzeigen</button>
+          <button id="showQuestionFromRoundBtn" class="btn">Frage (Playlist) anzeigen</button>
+          <button id="toggleTargetBtn" class="btn">Ziel ein/aus</button>
         </div>
 
         <div style="margin-top:12px">
@@ -48,6 +64,7 @@
         </div>
       </div>
 
+      <!-- MODERATOR-VORSCHAU -->
       <div class="card" style="flex:3">
         <h3 class="h">Moderator-Ansicht</h3>
         <div class="stage">
@@ -58,12 +75,44 @@
         <div class="small" style="margin-top:6px">Klicks werden als Punkte und Ringe angezeigt (nur Moderator).</div>
       </div>
 
+      <!-- SPIELERLISTE -->
       <div class="card" style="flex:2">
         <h3 class="h">Spieler</h3>
         <table class="tbl" id="playerTable">
           <thead><tr><th>Name</th><th>Punkte</th><th>Status</th></tr></thead>
           <tbody></tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- PLAYLIST + HISTORY/LOG -->
+    <div class="row" style="margin-top:12px">
+      <div class="card" style="flex:2">
+        <h3 class="h">Playlist</h3>
+        <div class="row">
+          <button id="loadPlaylist" class="btn">playlist.json laden</button>
+          <button id="startFromPlaylist" class="btn ok">Aus Auswahl starten</button>
+          <button id="nextInPlaylist" class="btn">Nächste in Playlist</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <select id="playlistSelect" class="select" style="min-width:260px"></select>
+        </div>
+        <div class="small" id="playlistInfo"></div>
+      </div>
+
+      <div class="card" style="flex:3">
+        <h3 class="h">Punkte-History (letzte 50)</h3>
+        <table class="tbl" id="histTable">
+          <thead><tr><th>Zeit</th><th>Runde</th><th>Spieler</th><th>Δ</th><th>Grund</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <div class="card" style="flex:1">
+        <h3 class="h">Runden-Log (letzte 20)</h3>
+        <div id="roundsLog"></div>
       </div>
     </div>
   </div>
@@ -75,6 +124,7 @@ const stageImg   = document.getElementById('stageImg');
 const adminClicks = document.getElementById('adminClicks');
 const tbody      = document.querySelector('#playerTable tbody');
 
+const titleEl    = document.getElementById('title');
 const imageUrl   = document.getElementById('imageUrl');
 const visibleSec = document.getElementById('visibleSec');
 const clickRadius= document.getElementById('clickRadius');
@@ -82,8 +132,19 @@ const tX = document.getElementById('tX');
 const tY = document.getElementById('tY');
 const tR = document.getElementById('tR');
 
+const vol = document.getElementById('vol');
+const questionText = document.getElementById('questionText');
+const showQuestionBtn = document.getElementById('showQuestionBtn');
+const showQuestionFromRoundBtn = document.getElementById('showQuestionFromRoundBtn');
+const toggleTargetBtn = document.getElementById('toggleTargetBtn');
+
+const playlistSelect = document.getElementById('playlistSelect');
+const playlistInfo   = document.getElementById('playlistInfo');
+
+// ── Manuelle Runde starten
 document.getElementById('startBtn').onclick = () => {
   const cfg = {
+    title: titleEl.value.trim() || null,
     imageUrl: imageUrl.value.trim(),
     visibleMs: Math.max(1, Number(visibleSec.value||4)) * 1000,
     clickRadiusPct: Math.max(1, Number(clickRadius.value||6)),
@@ -91,35 +152,62 @@ document.getElementById('startBtn').onclick = () => {
       x: (Number(tX.value)||50)/100,
       y: (Number(tY.value)||50)/100,
       rPct: Math.max(1, Number(tR.value||8)),
-    },
+    }
+    // optional: question: "…"
   };
-  socket.emit('admin:startRound', cfg, (res) => {
-    // optional: feedback
-  });
+  socket.emit('admin:startRound', cfg, () => {});
 };
 
-document.getElementById('revealBtn').onclick = () => {
-  socket.emit('admin:revealClicks', {}, () => {});
-};
+// ── Reveal / Judge / Next
+document.getElementById('revealBtn').onclick = () => socket.emit('admin:revealClicks', {}, ()=>{});
+document.getElementById('judgeBtn').onclick  = () => socket.emit('admin:judge', {}, ()=>{});
+document.getElementById('nextBtn').onclick   = () => socket.emit('admin:nextRound', ()=>{});
 
-document.getElementById('judgeBtn').onclick = () => {
-  socket.emit('admin:judge', {}, () => {});
-};
-
-document.getElementById('nextBtn').onclick = () => {
-  socket.emit('admin:nextRound', (res) => {});
-};
-
-const vol = document.getElementById('vol');
+// ── Volume
 vol.oninput = () => socket.emit('admin:setVolume', vol.value);
 
+// ── Fragen & Ziel
+showQuestionBtn.onclick = () => {
+  socket.emit('admin:showQuestion', questionText.value.trim(), ()=>{});
+};
+showQuestionFromRoundBtn.onclick = () => {
+  socket.emit('admin:showQuestionFromRound', {}, ()=>{});
+};
+let targetShown = false;
+toggleTargetBtn.onclick = () => {
+  targetShown = !targetShown;
+  socket.emit('admin:toggleTarget', targetShown, ()=>{});
+};
+
+// ── Playlist: laden / starten / weiter / Auswahl setzen
+document.getElementById('loadPlaylist').onclick = async () => {
+  try {
+    const resp = await fetch('/playlist.json');
+    const data = await resp.json();
+    socket.emit('admin:setPlaylist', data, ()=>{});
+  } catch(e) {
+    alert('Konnte playlist.json nicht laden');
+  }
+};
+document.getElementById('startFromPlaylist').onclick = () => {
+  socket.emit('admin:startFromPlaylist', ()=>{});
+};
+document.getElementById('nextInPlaylist').onclick = () => {
+  socket.emit('admin:nextInPlaylist', ()=>{});
+};
+playlistSelect.onchange = () => {
+  const idx = playlistSelect.selectedIndex;
+  socket.emit('admin:setPlaylistIndex', idx, ()=>{});
+};
+
+// ── State vom Server
 socket.on('admin:state', (st) => {
-  // Update Tafel
   if (st.round && st.round.imageUrl) stageImg.src = st.round.imageUrl;
   vol.value = st.volume ?? 0.5;
-  // clicks zeichnen
+
   drawAdminClicks(st);
-  // table
+
+  // Spieler-Tabelle
   tbody.innerHTML = '';
   (st.players||[]).forEach(p => {
     const tr = document.createElement('tr');
@@ -129,14 +217,83 @@ socket.on('admin:state', (st) => {
     tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
     tbody.appendChild(tr);
   });
+
+  // Playlist-Dropdown + Info
+  playlistSelect.innerHTML = '';
+  (st.playlist||[]).forEach((it, i) => {
+    const opt = document.createElement('option');
+    opt.textContent = `${i+1}. ${it.title||'(ohne Titel)'}`;
+    playlistSelect.appendChild(opt);
+  });
+  if (st.playlistIndex >= 0 && st.playlistIndex < (st.playlist||[]).length) {
+    playlistSelect.selectedIndex = st.playlistIndex;
+    const it = st.playlist[st.playlistIndex];
+    playlistInfo.textContent =
+      `${it.title||''} – Sichtbar: ${Math.round((it.visibleMs||0)/1000)}s, ` +
+      `Radius: ${it.clickRadiusPct}%, ` +
+      `Ziel: (${Math.round(it.target.x*100)}%, ${Math.round(it.target.y*100)}%, r=${it.target.rPct}%)` +
+      (it.question ? ` – Frage: "${it.question}"` : '');
+  } else {
+    playlistInfo.textContent = 'Keine Playlist geladen.';
+  }
+
+  // Punkte-History
+  const histBody = document.querySelector('#histTable tbody');
+  histBody.innerHTML = '';
+  (st.history||[]).slice().reverse().forEach(h => {
+    const tr = document.createElement('tr');
+    const dt = new Date(h.ts);
+    tr.innerHTML = `<td>${dt.toLocaleTimeString()}</td>
+                    <td>${h.roundId}</td>
+                    <td>${h.playerName||h.playerId}</td>
+                    <td>${h.delta>0?'+':''}${h.delta}</td>
+                    <td>${h.reason||''}</td>`;
+    histBody.appendChild(tr);
+  });
+
+  // Runden-Log
+  const log = document.getElementById('roundsLog');
+  log.innerHTML = '';
+  (st.roundsLog||[]).slice().reverse().forEach(r => {
+    const wrap = document.createElement('div');
+    wrap.style.border = '1px solid #30363d';
+    wrap.style.borderRadius = '10px';
+    wrap.style.padding = '8px';
+    wrap.style.marginBottom = '8px';
+
+    const title = r.title ? ` – ${r.title}` : '';
+    const header = document.createElement('div');
+    header.innerHTML = `<b>Runde ${r.roundId}${title}</b><br>
+                        Bild: ${r.imageUrl} – Sichtbar: ${Math.round((r.visibleMs||0)/1000)}s – Radius: ${r.clickRadiusPct}%`;
+
+    const ul = document.createElement('ul');
+    ul.className = 'list';
+    (r.clicks||[]).forEach(c => {
+      const li = document.createElement('li');
+      const hit = c.hit ? '✅' : '❌';
+      li.textContent = `${c.name}: (${Math.round(c.x*100)}%, ${Math.round(c.y*100)}%) ${hit}`;
+      ul.appendChild(li);
+    });
+
+    const win = document.createElement('div');
+    win.className = 'small';
+    win.textContent = `Gewinner: ${ (r.winners||[]).length ? r.winners.length : '–' }`;
+
+    wrap.appendChild(header);
+    wrap.appendChild(ul);
+    wrap.appendChild(win);
+    log.appendChild(wrap);
+  });
 });
 
+// ── Klickpunkte in der Moderator-Ansicht
 function drawAdminClicks(st) {
   adminClicks.innerHTML = '';
   if (!st.round) return;
   const cr = st.round.clickRadiusPct || 6;
   for (const pid in (st.round.clicks||{})) {
     const c = st.round.clicks[pid];
+
     const dot = document.createElement('div');
     dot.className = 'click-dot';
     dot.style.left = (c.x*100)+'%';
