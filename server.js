@@ -47,7 +47,7 @@ function initRound({ imageUrl, target, visibleMs, clickRadiusPct, title = null, 
     clicks: {},         // playerId -> {x,y,locked}
     question: question ? String(question).slice(0,200) : null,
     showTarget: false,
-    allowClicks: false,                 // ← neu: erst nach Dunkelphase wahr
+    allowClicks: false,                 // erst nach Dunkelphase wahr
     allowAt: Date.now() + (visibleMs||0) // Zeitstempel, ab wann Klicks erlaubt
   };
 
@@ -150,7 +150,7 @@ io.on('connection', (socket) => {
       // Reset aller Klicks & Locks
       Object.values(state.players).forEach(p => { p.locked = false; p.click = null; });
 
-      // Beim Start Frage/ziel nicht automatisch anzeigen
+      // Beim Start Frage/Ziel nicht automatisch anzeigen
       state.round.showTarget = false;
 
       io.emit('round:started', {
@@ -163,19 +163,26 @@ io.on('connection', (socket) => {
       ack && ack({ ok: true });
     });
 
-    // Klicks global offenbaren (Reveal-Fenster an ALLEN Klicks)
+    // „Klicks zeigen“ → NUR eigenen Radius an jeden Spieler senden
     socket.on('admin:revealClicks', (_void, ack) => {
       if (!state.round) return;
       state.round.revealed = true;
-      io.emit('round:reveal', {
-        clicks: state.round.clicks,
-        clickRadiusPct: state.round.clickRadiusPct,
-      });
+
+      const cr = state.round.clickRadiusPct;
+      // Jeder Spieler bekommt NUR seinen eigenen Klickradius
+      for (const pid of Object.keys(state.players)) {
+        const click = state.round.clicks[pid] || null;
+        io.to(pid).emit('round:revealSelf', {
+          click,
+          clickRadiusPct: cr
+        });
+      }
+
       broadcastAdminState();
       ack && ack({ ok: true });
     });
 
-    // Auswerten & Punkte vergeben
+    // Auswerten & Punkte vergeben (alle sehen alle Klicks)
     socket.on('admin:judge', (_void, ack) => {
       if (!state.round) return;
       const { winners } = judgeRoundAndAward();
