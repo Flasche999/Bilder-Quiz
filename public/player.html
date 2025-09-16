@@ -107,6 +107,22 @@ socket.on('hello', (st) => {
   updateVolume();
 });
 
+// ===== Hilfsfunktion: Reveal-Kreis mit Bild als Hintergrund rendern =====
+function addRevealCircle({ xPct, yPct, rPct }) {
+  const imgUrl = stageImg.currentSrc || stageImg.src;
+  const div = document.createElement('div');
+  div.className = 'reveal-window';
+  // Direkt im Element stylen, damit es auch ohne geändertes CSS funktioniert:
+  div.style.position = 'absolute';
+  div.style.inset = '0';
+  div.style.backgroundImage = `url('${imgUrl}')`;
+  div.style.backgroundRepeat = 'no-repeat';
+  div.style.backgroundPosition = 'center center';
+  div.style.backgroundSize = 'cover';
+  div.style.clipPath = `circle(${rPct}% at ${xPct}% ${yPct}%)`;
+  revealLayer.appendChild(div);
+}
+
 // Runde startet
 socket.on('round:started', (r) => {
   stageImg.src = r.imageUrl;
@@ -140,10 +156,7 @@ socket.on('round:revealSelf', ({ click, clickRadiusPct }) => {
   revealLayer.innerHTML = '';
   if (!click) return;
   const r = (clickRadiusPct || 6);
-  const div = document.createElement('div');
-  div.className = 'reveal-window';
-  div.style.clipPath = `circle(${r}% at ${click.x*100}% ${click.y*100}%)`;
-  revealLayer.appendChild(div);
+  addRevealCircle({ xPct: click.x * 100, yPct: click.y * 100, rPct: r });
 });
 
 // Auswertung: alle Klickbereiche für alle sichtbar
@@ -153,9 +166,9 @@ socket.on('round:judged', ({ winners, clicks, clickRadiusPct, target }) => {
   hint.textContent = youWin ? "✅ Treffer! +5 Punkte" : "❌ Leider daneben.";
 });
 
-// (optional, falls Server noch ein altes round:reveal sendet – hier ignorierbar oder minimal nutzen)
+// (optional, falls Server noch ein altes round:reveal sendet – hier ignorierbar)
 // socket.on('round:reveal', ({ clicks, clickRadiusPct }) => {
-//   // nicht verwenden, da „revealSelf“ nun pro Spieler geschickt wird
+//   // wird nicht genutzt, da „revealSelf“ pro Spieler gesendet wird
 // });
 
 socket.on('round:reset', () => {
@@ -196,24 +209,20 @@ socket.on('round:showTarget', ({ show, target }) => {
 
 // Eigener Revealkreis direkt nach Auto-Lock (Sofort-Feedback)
 socket.on('player:selfReveal', ({ click, clickRadiusPct }) => {
-  const div = document.createElement('div');
-  div.className = 'reveal-window';
-  div.style.clipPath = `circle(${clickRadiusPct}% at ${click.x*100}% ${click.y*100}%)`;
-  revealLayer.appendChild(div);
+  addRevealCircle({
+    xPct: click.x * 100,
+    yPct: click.y * 100,
+    rPct: (clickRadiusPct || 6)
+  });
 });
 
 // Hilfsfunktion: alle Klicks offenlegen (für 'judged')
 function showReveals(clicks, cr) {
   revealLayer.innerHTML = '';
+  const r = cr || clickRadiusPct || 6;
   for (const pid in clicks) {
     const c = clicks[pid];
-    const x = c.x*100;
-    const y = c.y*100;
-    const r = (cr || clickRadiusPct);
-    const div = document.createElement('div');
-    div.className = 'reveal-window';
-    div.style.clipPath = `circle(${r}% at ${x}% ${y}%)`;
-    revealLayer.appendChild(div);
+    addRevealCircle({ xPct: c.x * 100, yPct: c.y * 100, rPct: r });
   }
 }
 
