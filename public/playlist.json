@@ -1,3 +1,12 @@
+[
+  {
+    "title": "Neue Runde",
+    "imageUrl": "/images/bild1.png",
+    "visibleMs": 4000,
+    "clickRadiusPct": 6,
+    "target": { "x": 0.5091, "y": 0.1507, "rPct": 7 },
+    "question": "Deine Frage hier"
+  },
   {
     "title": "Finde die 8",
     "imageUrl": "/images/zahlen_suche.png",
@@ -14,14 +23,12 @@
     "target": { "x": 0.28, "y": 0.62, "rPct": 10 },
     "question": "Klicke auf die Banane"
   },
-  
- {
-  "title": "Runde 1",
-  "imageUrl": "/images/bild1.png",
-  "visibleMs": 4000,
-  "clickRadiusPct": 6,
-  "target": { "x": 0.5091, "y": 0.1507, "rPct": 8 },
-  "question": "Klicke auf den mittleren Stern"
-}
-  
+  {
+    "title": "Runde 1",
+    "imageUrl": "/images/bild1.png",
+    "visibleMs": 4000,
+    "clickRadiusPct": 6,
+    "target": { "x": 0.5091, "y": 0.1507, "rPct": 8 },
+    "question": "Klicke auf den mittleren Stern"
+  }
 ]
