@@ -1,8 +1,3 @@
-{
-  "title": "Neue Runde",
-  "imageUrl": "/images/bild1.png",
-  "visibleMs": 20000,
-  "clickRadiusPct": 6,
-  "target": { "x": 0.5091, "y": 0.1534, "rPct": 6 },
-  "question": "Deine Frage hier"
-}
+[
+  {"title":"Zahlenrätsel – Finde die 8","imageUrl":"/images/sample.png","visibleMs":20000,"clickRadiusPct":6,"target":{"x":0.52,"y":0.47,"rPct":8},"question":"Klicke auf die Ziffer 8"}
+]
