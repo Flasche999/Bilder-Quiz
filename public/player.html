@@ -7,17 +7,39 @@
   <link rel="stylesheet" href="/style.css" />
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
   <style>
-    /* Falls dein style.css das nicht schon setzt: */
+    /* Falls nicht schon in style.css enthalten: */
     .stage { position: relative; overflow: hidden; }
     #overlay, #clicks, #mask { position: absolute; inset: 0; }
     .overlay-dark { background:#000; opacity:0; transition:.2s; }
     .overlay-dark.active { opacity:1; }
     .dot  { width:10px; height:10px; border-radius:50%; transform:translate(-50%,-50%); position:absolute; }
     .ring { border:2px dashed rgba(255,255,255,.85); border-radius:50%; transform:translate(-50%,-50%); position:absolute; }
+    .join { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px }
+    .join .input { max-width:220px }
+    .color-badge{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
   </style>
 </head>
 <body>
   <h1>Spieler</h1>
+
+  <!-- Join-Gate -->
+  <div class="card" id="joinCard">
+    <div class="join">
+      <input id="nameInput" class="input" placeholder="Dein Name">
+      <input id="codeInput" class="input" placeholder="Raumcode z. B. 1234">
+      <button id="joinBtn" class="btn ok">Beitreten</button>
+    </div>
+    <div class="small" id="joinMsg"></div>
+  </div>
+
+  <!-- Scoreboard (sichtbar für Spieler) -->
+  <div class="card">
+    <h3 class="h">Spieler & Punkte</h3>
+    <table>
+      <thead><tr><th>Name</th><th>Punkte</th><th>Farbe</th></tr></thead>
+      <tbody id="scoreBody"></tbody>
+    </table>
+  </div>
 
   <div class="stage" id="stage">
     <img id="img" alt="Bild" />
@@ -26,11 +48,11 @@
     <canvas id="mask"></canvas>
   </div>
 
-  <div id="question"></div>
+  <div id="question" class="h"></div>
 
   <script>
     const s = io();
-    let myId, myColor, curRound, myClick;
+    let myId, myColor, curRound, myClick, joined = false;
 
     const img = document.getElementById('img');
     const overlay = document.getElementById('overlay');
@@ -39,6 +61,14 @@
     const ctx = mask.getContext('2d');
     const stage = document.getElementById('stage');
     const q = document.getElementById('question');
+
+    const joinCard = document.getElementById('joinCard');
+    const joinMsg  = document.getElementById('joinMsg');
+    const nameInput= document.getElementById('nameInput');
+    const codeInput= document.getElementById('codeInput');
+    const joinBtn  = document.getElementById('joinBtn');
+
+    const scoreBody = document.getElementById('scoreBody');
 
     // ---- Helper: sichtbare Bildfläche relativ zur Stage (ohne Letterbox-Ränder)
     function getImageContentRect(imgEl, stageEl) {
@@ -78,9 +108,10 @@
 
     // Spieler darf erst nach Dunkelphase klicken, genau einmal
     stage.onclick = (e) => {
+      if (!joined) return;               // erst nach Join
       if (!curRound) return;
       if (Date.now() < curRound.willDarkAt) return; // erst nach Abdunkeln
-      if (myClick) return; // nur 1 Klick
+      if (myClick) return;               // nur 1 Klick
 
       const stageRect = stage.getBoundingClientRect();
       const clickX = e.clientX - stageRect.left;
@@ -126,11 +157,44 @@
       ctx.globalCompositeOperation = 'source-over';
     }
 
-    // Server-Begrüßung
+    // Server-Begrüßung (bei neuer Verbindung)
     s.on('hello', d => {
-      myId = d.id;
-      myColor = d.color;
-      if (d.round) onStart(d.round);
+      // erwartet { needJoin:true } – UI bleibt sichtbar
+    });
+
+    // Join drücken
+    joinBtn.onclick = ()=>{
+      const name = nameInput.value.trim();
+      const code = codeInput.value.trim();
+      s.emit('player:join', { name, roomCode: code }, (res)=>{
+        if(!res?.ok){
+          joinMsg.textContent = res?.error === 'wrong_code'
+            ? 'Falscher Raumcode.'
+            : 'Bitte Name & Code prüfen.';
+          return;
+        }
+        joinMsg.textContent = '';
+        joined = true;
+      });
+    };
+
+    // Erfolgreich gejoint → Farbe & evtl. laufende Runde erhalten
+    s.on('joined', ({ id, color, round })=>{
+      myId = id;
+      myColor = color;
+      joinCard.style.display = 'none';
+      if (round) onStart(round);
+    });
+
+    // Scoreboard-Liste erhalten
+    s.on('players:list', (list)=>{
+      scoreBody.innerHTML = '';
+      list.sort((a,b)=> b.score - a.score); // optional: nach Punkten sortiert
+      list.forEach(p=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${p.name}</td><td>${p.score}</td><td><span class="color-badge" style="background:${p.color}"></span>${p.color}</td>`;
+        scoreBody.appendChild(tr);
+      });
     });
 
     // Rundenstart
