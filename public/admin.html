@@ -33,7 +33,7 @@
     <button id="judge"  class="btn warn">Auswertung (+5)</button>
   </div>
 
-  <div class="stage">
+  <div class="stage" id="stage">
     <img id="img" alt="Vorschau" />
     <div id="clickLayer"></div>
   </div>
@@ -49,10 +49,22 @@
 
   <script>
     const s = io({ query:{ role:'admin' } });
+    const stage = document.getElementById('stage');
     const img = document.getElementById('img');
     const layer = document.getElementById('clickLayer');
     const tbody = document.getElementById('players');
     const roundInfo = document.getElementById('roundInfo');
+
+    // ---- Helper: sichtbare Bildfläche relativ zur Stage (ohne Letterbox-Ränder)
+    function getImageContentRect(imgEl, stageEl) {
+      const stageRect = stageEl.getBoundingClientRect();
+      const imgRect   = imgEl.getBoundingClientRect();
+      const left   = imgRect.left - stageRect.left;
+      const top    = imgRect.top  - stageRect.top;
+      const width  = imgRect.width;
+      const height = imgRect.height;
+      return { left, top, width, height }; // px relativ zur Stage
+    }
 
     function drawPlayers(st){
       tbody.innerHTML = '';
@@ -64,27 +76,32 @@
       });
     }
 
-    function drawAdminClicksFromState(st){
+    function drawAdminClicksPx(players, round){
       layer.innerHTML = '';
-      if (!st.round) return;
-      const cr = st.round.clickRadiusPct || 6;
+      if (!round) return;
 
-      (st.players||[]).forEach(p=>{
+      const rect = getImageContentRect(img, stage);
+      const rPx  = ((round.clickRadiusPct||6)/100) * Math.min(rect.width, rect.height);
+
+      (players||[]).forEach(p=>{
         if (!p.click) return;
+
+        const cx = rect.left + p.click.x * rect.width;
+        const cy = rect.top  + p.click.y * rect.height;
 
         const d = document.createElement('div');
         d.className = 'dot';
-        d.style.left = (p.click.x*100)+'%';
-        d.style.top  = (p.click.y*100)+'%';
+        d.style.left = cx + 'px';
+        d.style.top  = cy + 'px';
         d.style.background = p.color;
         layer.appendChild(d);
 
         const r = document.createElement('div');
         r.className = 'ring';
-        r.style.left = (p.click.x*100)+'%';
-        r.style.top  = (p.click.y*100)+'%';
-        r.style.width = (cr*2)+'%';
-        r.style.height= (cr*2)+'%';
+        r.style.left  = cx + 'px';
+        r.style.top   = cy + 'px';
+        r.style.width  = (rPx*2) + 'px';
+        r.style.height = (rPx*2) + 'px';
         r.style.borderColor = p.color;
         layer.appendChild(r);
       });
@@ -94,6 +111,7 @@
       if (!st.round){
         roundInfo.textContent = '';
         img.src = '';
+        layer.innerHTML = '';
         return;
       }
       img.src = st.round.imageUrl || '';
@@ -101,31 +119,42 @@
       roundInfo.textContent = `${st.round.title||''} — Sichtbar: ${secs}s — Klickradius: ${st.round.clickRadiusPct||6}%`;
     }
 
+    // Bei Bild-Neuladung Markierungen neu zeichnen
+    img.onload = () => {
+      // Wir haben keinen vollen State hier – kleine Auffrischung anfordern:
+      s.emit('admin:state:refresh'); // optional – wenn dein Server das nicht behandelt, einfach weglassen
+    };
+
     // Vollständiger Admin-State (bei Join & nach Änderungen)
     s.on('admin:state', (st)=>{
       setRoundInfo(st);
       drawPlayers(st);
-      // live alle Klicks zeigen (Admin darf alles sehen)
-      drawAdminClicksFromState(st);
+      drawAdminClicksPx(st.players, st.round); // live alle Klicks px-genau
     });
 
-    // ★ Neues Reveal-Event NUR für Admin: alle Klicks + einheitlicher Radius
+    // ★ Neues Reveal-Event NUR für Admin: alle Klicks + Radius → px-genau zeichnen
     s.on('round:revealAll', ({ clicks, clickRadiusPct })=>{
       layer.innerHTML = '';
+      const rect = getImageContentRect(img, stage);
+      const rPx  = (clickRadiusPct/100) * Math.min(rect.width, rect.height);
+
       (clicks||[]).forEach(c=>{
+        const cx = rect.left + c.x * rect.width;
+        const cy = rect.top  + c.y * rect.height;
+
         const d = document.createElement('div');
         d.className = 'dot';
-        d.style.left = (c.x*100)+'%';
-        d.style.top  = (c.y*100)+'%';
+        d.style.left = cx + 'px';
+        d.style.top  = cy + 'px';
         d.style.background = c.color;
         layer.appendChild(d);
 
         const r = document.createElement('div');
         r.className = 'ring';
-        r.style.left = (c.x*100)+'%';
-        r.style.top  = (c.y*100)+'%';
-        r.style.width = (clickRadiusPct*2)+'%';
-        r.style.height= (clickRadiusPct*2)+'%';
+        r.style.left  = cx + 'px';
+        r.style.top   = cy + 'px';
+        r.style.width  = (rPx*2) + 'px';
+        r.style.height = (rPx*2) + 'px';
         r.style.borderColor = c.color;
         layer.appendChild(r);
       });
