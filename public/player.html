@@ -6,6 +6,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/style.css" />
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <style>
+    /* Falls dein style.css das nicht schon setzt: */
+    .stage { position: relative; overflow: hidden; }
+    #overlay, #clicks, #mask { position: absolute; inset: 0; }
+    .overlay-dark { background:#000; opacity:0; transition:.2s; }
+    .overlay-dark.active { opacity:1; }
+    .dot  { width:10px; height:10px; border-radius:50%; transform:translate(-50%,-50%); position:absolute; }
+    .ring { border:2px dashed rgba(255,255,255,.85); border-radius:50%; transform:translate(-50%,-50%); position:absolute; }
+  </style>
 </head>
 <body>
   <h1>Spieler</h1>
@@ -31,22 +40,38 @@
     const stage = document.getElementById('stage');
     const q = document.getElementById('question');
 
+    // ---- Helper: sichtbare Bildfläche relativ zur Stage (ohne Letterbox-Ränder)
+    function getImageContentRect(imgEl, stageEl) {
+      const stageRect = stageEl.getBoundingClientRect();
+      const imgRect   = imgEl.getBoundingClientRect();
+      const left   = imgRect.left - stageRect.left;
+      const top    = imgRect.top  - stageRect.top;
+      const width  = imgRect.width;
+      const height = imgRect.height;
+      return { left, top, width, height }; // px relativ zur Stage
+    }
+
     // Canvas korrekt dimensionieren
     function resize(){
-      mask.width = stage.clientWidth;
+      mask.width  = stage.clientWidth;
       mask.height = stage.clientHeight;
     }
     addEventListener('resize', resize);
+    img.onload = () => { resize(); }; // nach Bildwechsel neu anpassen
     // initial
     requestAnimationFrame(resize);
 
     function drawMine(){
       clicks.innerHTML = '';
       if (!myClick) return;
+
+      // in px relativ zur Bildfläche positionieren
+      const rect = getImageContentRect(img, stage);
+
       const d = document.createElement('div');
       d.className = 'dot';
-      d.style.left = (myClick.x*100) + '%';
-      d.style.top  = (myClick.y*100) + '%';
+      d.style.left = (rect.left + myClick.x * rect.width) + 'px';
+      d.style.top  = (rect.top  + myClick.y * rect.height) + 'px';
       d.style.background = myColor;
       clicks.appendChild(d);
     }
@@ -57,11 +82,22 @@
       if (Date.now() < curRound.willDarkAt) return; // erst nach Abdunkeln
       if (myClick) return; // nur 1 Klick
 
-      const r = stage.getBoundingClientRect();
-      myClick = {
-        x: (e.clientX - r.left) / r.width,
-        y: (e.clientY - r.top)  / r.height
-      };
+      const stageRect = stage.getBoundingClientRect();
+      const clickX = e.clientX - stageRect.left;
+      const clickY = e.clientY - stageRect.top;
+
+      // Nur Klicks IN der sichtbaren Bildfläche akzeptieren
+      const rect = getImageContentRect(img, stage);
+      if (clickX < rect.left || clickX > rect.left + rect.width ||
+          clickY < rect.top  || clickY > rect.top  + rect.height) {
+        return; // außerhalb geklickt → ignoriere
+      }
+
+      // Normalisieren auf 0..1 in Bildkoordinaten
+      const x = (clickX - rect.left) / rect.width;
+      const y = (clickY - rect.top)  / rect.height;
+
+      myClick = { x, y };
       drawMine();
       s.emit('player:click', myClick);
     };
@@ -69,18 +105,23 @@
     function applyDark(a){ overlay.classList.toggle('active', !!a); }
     function clearMask(){ ctx.clearRect(0,0,mask.width,mask.height); }
 
-    // Nur EIGENEN Kreis „freistanzen“
+    // Nur EIGENEN Kreis „freistanzen“ – Loch im dunklen Overlay exakt an der Bildposition
     function revealOwn(click, rPct){
       clearMask();
       if (!click) return; // kein Loch, Bild bleibt dunkel
+
+      const rect = getImageContentRect(img, stage);
+      const rPx = (rPct/100) * Math.min(rect.width, rect.height);
+      const cx  = rect.left + click.x * rect.width;
+      const cy  = rect.top  + click.y * rect.height;
+
       // gesamte Fläche schwärzen
       ctx.fillStyle = 'rgba(0,0,0,0.95)';
       ctx.fillRect(0,0,mask.width,mask.height);
       // Loch stanzen
       ctx.globalCompositeOperation = 'destination-out';
-      const r = (rPct/100) * Math.min(mask.width, mask.height);
       ctx.beginPath();
-      ctx.arc(click.x*mask.width, click.y*mask.height, r, 0, Math.PI*2);
+      ctx.arc(cx, cy, rPx, 0, Math.PI*2);
       ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
     }
@@ -112,27 +153,31 @@
 
     s.on('round:start', onStart);
 
-    // ★ NEU: Reveal NUR für den eigenen Klick
-    // Der Server sendet round:revealYou ausschließlich an den jeweiligen Spieler
+    // ★ Reveal NUR für den eigenen Klick (vom Server pro Socket gesendet)
     s.on('round:revealYou', ({ click, clickRadiusPct }) => {
-      // Nur den eigenen Dot & Ring zeichnen
       clicks.innerHTML = '';
+
       if (click) {
+        const rect = getImageContentRect(img, stage);
+        const cxPx = rect.left + click.x * rect.width;
+        const cyPx = rect.top  + click.y * rect.height;
+        const rPx  = (clickRadiusPct/100) * Math.min(rect.width, rect.height);
+
         // Dot
         const d = document.createElement('div');
         d.className = 'dot';
-        d.style.left = (click.x*100) + '%';
-        d.style.top  = (click.y*100) + '%';
+        d.style.left = cxPx + 'px';
+        d.style.top  = cyPx + 'px';
         d.style.background = myColor;
         clicks.appendChild(d);
 
         // Ring
         const r = document.createElement('div');
         r.className = 'ring';
-        r.style.left = (click.x*100) + '%';
-        r.style.top  = (click.y*100) + '%';
-        r.style.width  = (clickRadiusPct*2) + '%';
-        r.style.height = (clickRadiusPct*2) + '%';
+        r.style.left  = cxPx + 'px';
+        r.style.top   = cyPx + 'px';
+        r.style.width  = (rPx*2) + 'px';
+        r.style.height = (rPx*2) + 'px';
         r.style.borderColor = myColor;
         clicks.appendChild(r);
       }
