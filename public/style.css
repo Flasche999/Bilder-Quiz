@@ -1,1 +1,77 @@
-body{background:#0b0f16;color:#fff;font-family:sans-serif;margin:0;padding:20px;} .card{background:#111827;border-radius:10px;padding:10px;margin-bottom:10px;} .stage{position:relative;overflow:hidden;border-radius:10px;} .stage img{width:100%;display:block;} .overlay-dark{position:absolute;inset:0;background:#000;opacity:0;transition:.3s} .overlay-dark.active{opacity:1} .dot{position:absolute;width:10px;height:10px;border-radius:50%;transform:translate(-50%,-50%);} .ring{position:absolute;transform:translate(-50%,-50%);border:2px dashed #fff;border-radius:50%}
+/* Grundlayout */
+body{
+  background:#0b0f16;
+  color:#fff;
+  font-family:sans-serif;
+  margin:0;
+  padding:20px;
+}
+.container{ max-width:1200px; margin:0 auto; }
+.card{ background:#111827; border-radius:10px; padding:10px; margin-bottom:10px; }
+.small{ opacity:.8; font-size:12px }
+
+/* Buttons & Controls */
+.controls{ display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 }
+.btn{
+  padding:8px 12px;
+  border-radius:10px;
+  border:1px solid #2a3345;
+  background:#0f172a;
+  color:#fff;
+  cursor:pointer;
+}
+.btn.ok{ background:#0b2620; border-color:#0e3e33 }
+.btn.warn{ background:#2a1a05; border-color:#4a2f08 }
+.input,.select{
+  width:100%;
+  padding:8px;
+  border-radius:10px;
+  border:1px solid #2a3345;
+  background:#0f172a;
+  color:#fff;
+}
+
+/* Tabelle */
+table{ width:100%; border-collapse:collapse; margin-top:10px }
+th,td{ border:1px solid #2a3345; padding:6px 8px; text-align:left }
+
+/* Stage / Bildfläche */
+.stage{ position:relative; overflow:hidden; border-radius:10px; background:#000 }
+.stage img{ display:block; width:100%; height:auto }
+
+/* Layer (Pixel-Fix: absolute, deckungsgleich) */
+#overlay,#clicks,#clickLayer,#mask{ position:absolute; inset:0; pointer-events:none }
+#clicks{ pointer-events:none } /* klicken erfolgt auf .stage */
+
+/* Abdunkeln */
+.overlay-dark{ background:#000; opacity:0; transition:.3s }
+.overlay-dark.active{ opacity:1 }
+
+/* Klick-Markierungen */
+.dot{
+  position:absolute;
+  width:10px; height:10px;
+  border-radius:50%;
+  transform:translate(-50%,-50%);
+}
+.ring{
+  position:absolute;
+  transform:translate(-50%,-50%);
+  border:2px dashed rgba(255,255,255,.85);
+  border-radius:50%;
+}
+
+/* Farb-Badge (Spielerfarbe-Anzeige) */
+.color-badge{
+  display:inline-block;
+  width:10px; height:10px;
+  border-radius:50%;
+  margin-right:6px;
+}
+
+/* Sonstiges */
+.list{ margin:0; padding-left:18px }
+.h{ margin:.2em 0 }
+.row{ display:flex; gap:12px; align-items:center }
+.grid-2{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px }
+.grid-3{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px }
