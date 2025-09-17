@@ -1,1 +1,149 @@
-<!doctype html><html><head><meta charset='utf-8'><title>Admin</title><link rel='stylesheet' href='/style.css'><script src='https://cdn.socket.io/4.8.1/socket.io.min.js'></script></head><body><h1>Admin</h1><div class='stage'><img id='img'><div id='clickLayer'></div></div><button id='load'>Load Playlist</button><button id='start'>Start</button><button id='next'>Next</button><button id='reveal'>Reveal</button><button id='judge'>Judge</button><table id='players'></table><script>const s=io({query:{role:'admin'}});const img=document.getElementById('img');const layer=document.getElementById('clickLayer');const players=document.getElementById('players');function draw(st){if(st.round){img.src=st.round.imageUrl;}layer.innerHTML='';(st.players||[]).forEach(p=>{if(!p.click)return;const d=document.createElement('div');d.className='dot';d.style.left=(p.click.x*100)+'%';d.style.top=(p.click.y*100)+'%';d.style.background=p.color;layer.appendChild(d);const r=document.createElement('div');r.className='ring';r.style.left=(p.click.x*100)+'%';r.style.top=(p.click.y*100)+'%';r.style.width=(st.round.clickRadiusPct*2)+'%';r.style.height=(st.round.clickRadiusPct*2)+'%';r.style.borderColor=p.color;layer.appendChild(r);});players.innerHTML='';(st.players||[]).forEach(p=>{players.innerHTML+=`<tr><td>${p.name}</td><td>${p.score}</td></tr>`;});}s.on('admin:state',draw);document.getElementById('load').onclick=async()=>{const d=await (await fetch('/playlist.json')).json();s.emit('admin:setPlaylist',d)};document.getElementById('start').onclick=()=>s.emit('admin:startFromPlaylist');document.getElementById('next').onclick=()=>s.emit('admin:nextInPlaylist');document.getElementById('reveal').onclick=()=>s.emit('admin:revealClicks');document.getElementById('judge').onclick=()=>s.emit('admin:judge');</script></body></html>
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Bildklick-Quiz – Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <style>
+    body { padding: 20px }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 }
+    .btn { padding:8px 12px; border-radius:10px; border:1px solid #2a3345; background:#0f172a; color:#fff; cursor:pointer }
+    .btn.ok { background:#0b2620; border-color:#0e3e33 }
+    .btn.warn { background:#2a1a05; border-color:#4a2f08 }
+    .stage { position:relative; overflow:hidden; border-radius:12px; background:#000; margin:10px 0 }
+    .stage img { display:block; width:100%; height:auto }
+    #clickLayer { position:absolute; inset:0; pointer-events:none }
+    .dot { position:absolute; width:10px; height:10px; border-radius:50%; transform:translate(-50%,-50%) }
+    .ring { position:absolute; transform:translate(-50%,-50%); border:2px dashed rgba(255,255,255,.8); border-radius:50% }
+    table { width:100%; border-collapse:collapse; margin-top:10px }
+    th, td { border:1px solid #2a3345; padding:6px 8px; text-align:left }
+    .small { opacity:.8; font-size:12px }
+  </style>
+</head>
+<body>
+  <h1>Admin – Bildklick-Quiz</h1>
+
+  <div class="controls">
+    <button id="load"   class="btn">Playlist laden</button>
+    <button id="start"  class="btn ok">Auswahl starten</button>
+    <button id="next"   class="btn">Nächste</button>
+    <button id="reveal" class="btn">Klicks anzeigen</button>
+    <button id="judge"  class="btn warn">Auswertung (+5)</button>
+  </div>
+
+  <div class="stage">
+    <img id="img" alt="Vorschau" />
+    <div id="clickLayer"></div>
+  </div>
+  <div class="small" id="roundInfo"></div>
+
+  <h3>Spieler</h3>
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Punkte</th><th>Status</th></tr>
+    </thead>
+    <tbody id="players"></tbody>
+  </table>
+
+  <script>
+    const s = io({ query:{ role:'admin' } });
+    const img = document.getElementById('img');
+    const layer = document.getElementById('clickLayer');
+    const tbody = document.getElementById('players');
+    const roundInfo = document.getElementById('roundInfo');
+
+    function drawPlayers(st){
+      tbody.innerHTML = '';
+      (st.players||[]).forEach(p=>{
+        const tr = document.createElement('tr');
+        const status = p.locked ? '✅ geklickt' : '…';
+        tr.innerHTML = `<td>${p.name}</td><td>${p.score||0}</td><td>${status}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function drawAdminClicksFromState(st){
+      layer.innerHTML = '';
+      if (!st.round) return;
+      const cr = st.round.clickRadiusPct || 6;
+
+      (st.players||[]).forEach(p=>{
+        if (!p.click) return;
+
+        const d = document.createElement('div');
+        d.className = 'dot';
+        d.style.left = (p.click.x*100)+'%';
+        d.style.top  = (p.click.y*100)+'%';
+        d.style.background = p.color;
+        layer.appendChild(d);
+
+        const r = document.createElement('div');
+        r.className = 'ring';
+        r.style.left = (p.click.x*100)+'%';
+        r.style.top  = (p.click.y*100)+'%';
+        r.style.width = (cr*2)+'%';
+        r.style.height= (cr*2)+'%';
+        r.style.borderColor = p.color;
+        layer.appendChild(r);
+      });
+    }
+
+    function setRoundInfo(st){
+      if (!st.round){
+        roundInfo.textContent = '';
+        img.src = '';
+        return;
+      }
+      img.src = st.round.imageUrl || '';
+      const secs = Math.round((st.round.visibleMs||0)/1000);
+      roundInfo.textContent = `${st.round.title||''} — Sichtbar: ${secs}s — Klickradius: ${st.round.clickRadiusPct||6}%`;
+    }
+
+    // Vollständiger Admin-State (bei Join & nach Änderungen)
+    s.on('admin:state', (st)=>{
+      setRoundInfo(st);
+      drawPlayers(st);
+      // live alle Klicks zeigen (Admin darf alles sehen)
+      drawAdminClicksFromState(st);
+    });
+
+    // ★ Neues Reveal-Event NUR für Admin: alle Klicks + einheitlicher Radius
+    s.on('round:revealAll', ({ clicks, clickRadiusPct })=>{
+      layer.innerHTML = '';
+      (clicks||[]).forEach(c=>{
+        const d = document.createElement('div');
+        d.className = 'dot';
+        d.style.left = (c.x*100)+'%';
+        d.style.top  = (c.y*100)+'%';
+        d.style.background = c.color;
+        layer.appendChild(d);
+
+        const r = document.createElement('div');
+        r.className = 'ring';
+        r.style.left = (c.x*100)+'%';
+        r.style.top  = (c.y*100)+'%';
+        r.style.width = (clickRadiusPct*2)+'%';
+        r.style.height= (clickRadiusPct*2)+'%';
+        r.style.borderColor = c.color;
+        layer.appendChild(r);
+      });
+    });
+
+    // Buttons (Deutsch)
+    document.getElementById('load').onclick  = async ()=>{
+      try {
+        const d = await (await fetch('/playlist.json')).json();
+        s.emit('admin:setPlaylist', d);
+      } catch(e){
+        alert('Konnte playlist.json nicht laden.');
+      }
+    };
+    document.getElementById('start').onclick = ()=> s.emit('admin:startFromPlaylist');
+    document.getElementById('next').onclick  = ()=> s.emit('admin:nextInPlaylist');
+    document.getElementById('reveal').onclick= ()=> s.emit('admin:revealClicks');
+    document.getElementById('judge').onclick = ()=> s.emit('admin:judge');
+  </script>
+</body>
+</html>
