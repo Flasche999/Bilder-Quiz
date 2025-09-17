@@ -1,4 +1,4 @@
-// server.js – Bildklick-Quiz (Neustart)
+// server.js – Bildklick-Quiz (Raumcode + Name + Farben + Scoreboard + getrenntes Reveal)
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -16,25 +16,49 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/healthz', (_req, res) => res.status(200).type('text').send('OK'));
 
+// ─────────────────────────────────────────────────────────────
 // State
-const COLORS = ['#3b82f6','#eab308','#22c55e','#ef4444','#a855f7','#14b8a6','#f97316','#84cc16'];
-let state = { players:{}, round:null, playlist:[], playlistIndex:-1 };
+// ─────────────────────────────────────────────────────────────
+const COLORS = [
+  '#ef4444','#22c55e','#3b82f6','#eab308',
+  '#a855f7','#14b8a6','#f97316','#84cc16',
+  '#f43f5e','#06b6d4'
+];
+
+let state = {
+  players: {},          // id -> {id,name,score,colorIdx,locked,click}
+  round: null,          // {id,title,imageUrl,visibleMs,clickRadiusPct,target,question,startedAt,willDarkAt,reveal}
+  playlist: [],
+  playlistIndex: -1,
+  roomCode: '1234'      // Default Raumcode (Admin kann ändern)
+};
 
 const newId=()=>Math.random().toString(36).slice(2,8);
 const now=()=>Date.now();
 const toAdmin=()=>io.to('admin');
 
+// Admin-Shape inkl. Farben & Code
 function adminShape(){
   return {
+    roomCode: state.roomCode,
     players:Object.values(state.players).map(p=>({
-      id:p.id,name:p.name,score:p.score,
+      id:p.id, name:p.name, score:p.score,
       color:COLORS[p.colorIdx%COLORS.length],
-      locked:p.locked,click:p.click
+      locked:p.locked, click:p.click
     })),
     round:state.round, playlist:state.playlist, playlistIndex:state.playlistIndex
   };
 }
 function broadcastAdmin(){ toAdmin().emit('admin:state', adminShape()); }
+
+// Scoreboard an alle Spieler senden
+function broadcastPlayersList(){
+  const list = Object.values(state.players).map(p=>({
+    id:p.id, name:p.name, score:p.score, color: COLORS[p.colorIdx%COLORS.length]
+  }));
+  io.emit('players:list', list);
+}
+
 function isHit(click,target){
   if(!click||!target) return false;
   const dx=(click.x-target.x), dy=(click.y-target.y);
@@ -48,36 +72,46 @@ io.on('connection',(socket)=>{
   // ── ADMIN
   if(role==='admin'){
     socket.join('admin');
-    socket.emit('admin:state',adminShape());
+    socket.emit('admin:state', adminShape());
 
+    // Raumcode setzen
+    socket.on('admin:setRoomCode', (code, ack)=>{
+      const c = String(code||'').trim();
+      if (!c) return ack && ack({ok:false, error:'empty_code'});
+      state.roomCode = c;
+      broadcastAdmin();
+      ack && ack({ok:true});
+    });
+
+    // Playlist steuern
     socket.on('admin:setPlaylist',(d,ack)=>{
       state.playlist = Array.isArray(d) ? d : (d?.items||[]);
       state.playlistIndex = state.playlist.length ? 0 : -1;
-      broadcastAdmin(); ack && ack();
+      broadcastAdmin(); ack && ack({ok:true});
     });
 
     socket.on('admin:startFromPlaylist',(ack)=>{
-      if(state.playlistIndex<0) return;
+      if(state.playlistIndex<0) return ack && ack({ok:false,error:'no_playlist'});
       startRound(state.playlist[state.playlistIndex]);
-      ack && ack();
+      ack && ack({ok:true});
     });
 
     socket.on('admin:nextInPlaylist',(ack)=>{
-      if(!state.playlist.length) return;
+      if(!state.playlist.length) return ack && ack({ok:false,error:'no_playlist'});
       state.playlistIndex = (state.playlistIndex+1)%state.playlist.length;
       startRound(state.playlist[state.playlistIndex]);
-      ack && ack();
+      ack && ack({ok:true});
     });
 
-    socket.on('admin:startRound',(cfg,ack)=>{ startRound(cfg); ack&&ack(); });
+    socket.on('admin:startRound',(cfg,ack)=>{ startRound(cfg); ack&&ack({ok:true}); });
 
-    // ★ NEU: getrenntes Reveal – Admin bekommt alle, Spieler nur ihren eigenen
+    // ★ Getrenntes Reveal – Admin bekommt alle, Spieler nur ihren eigenen Radius
     socket.on('admin:revealClicks',(_,ack)=>{
-      if(!state.round) return;
+      if(!state.round) return ack && ack({ok:false});
       state.round.reveal = true;
 
       // 1) Admin: alle Klicks
-      const all = shapeReveal(); // { clicks:[{id,name,color,x,y}], clickRadiusPct }
+      const all = shapeRevealAll(); // { clicks:[{id,name,color,x,y}], clickRadiusPct }
       io.to('admin').emit('round:revealAll', all);
 
       // 2) Spieler: nur eigener Klick & Radius
@@ -95,11 +129,12 @@ io.on('connection',(socket)=>{
         }
       }
 
-      broadcastAdmin(); ack && ack();
+      broadcastAdmin(); ack && ack({ok:true});
     });
 
+    // Auswertung -> +5 Punkte für Treffer
     socket.on('admin:judge',(_,ack)=>{
-      if(!state.round) return;
+      if(!state.round) return ack && ack({ok:false});
       const winners=[];
       for(const p of Object.values(state.players)){
         if(isHit(p.click,state.round.target)){
@@ -108,38 +143,54 @@ io.on('connection',(socket)=>{
         }
       }
       io.emit('round:judged',{winners});
-      broadcastAdmin(); ack&&ack();
+      broadcastAdmin();
+      broadcastPlayersList(); // Scoreboard aktualisieren
+      ack&&ack({ok:true});
     });
 
     return; // admin done
   }
 
   // ── PLAYER
-  const id=socket.id;
-  state.players[id]={
-    id,
-    name:`Spieler ${Object.keys(state.players).length}`,
-    score:0,
-    colorIdx:Object.keys(state.players).length%COLORS.length,
-    locked:false,
-    click:null
-  };
+  // Gate: Spieler müssen zuerst mit Name + Raumcode joinen
+  socket.emit('hello', { needJoin:true });
 
-  socket.emit('hello',{id,color:COLORS[state.players[id].colorIdx],round:publicRoundShape()});
-  broadcastAdmin();
+  socket.on('player:join', ({name, roomCode}, ack)=>{
+    const n = String(name||'').trim();
+    const rc = String(roomCode||'').trim();
+    if (!n || !rc) return ack && ack({ok:false, error:'name_or_code_missing'});
+    if (rc !== state.roomCode) return ack && ack({ok:false, error:'wrong_code'});
 
-  socket.on('player:setName',(n)=>{
-    state.players[id].name=String(n||'Spieler').slice(0,24);
+    const id = socket.id;
+    const colorIdx = Object.keys(state.players).length % COLORS.length;
+
+    state.players[id] = {
+      id,
+      name: n.slice(0,24),
+      score: state.players[id]?.score || 0,
+      colorIdx,
+      locked:false,
+      click:null
+    };
+
+    // initiale Infos zurück
+    socket.emit('joined', {
+      id,
+      color: COLORS[colorIdx],
+      round: publicRoundShape()
+    });
+
     broadcastAdmin();
+    broadcastPlayersList();
+    ack && ack({ok:true});
   });
 
   socket.on('player:click',({x,y})=>{
-    const p=state.players[id];
-    if(!state.round||!p) return;
+    const p=state.players[socket.id];
+    if(!state.round || !p) return;      // nur registrierte Spieler
     const t=now();
-    // Nur nach Dunkelphase und nur 1 Click
-    if(t<state.round.willDarkAt) return;
-    if(p.locked) return;
+    if(t<state.round.willDarkAt) return; // erst nach Abdunkeln
+    if(p.locked) return;                  // nur 1 Klick
 
     p.click={x:Math.min(1,Math.max(0,x)), y:Math.min(1,Math.max(0,y))};
     p.locked=true;
@@ -151,18 +202,24 @@ io.on('connection',(socket)=>{
   });
 
   socket.on('disconnect',()=>{
-    delete state.players[id];
-    broadcastAdmin();
+    if (state.players[socket.id]) {
+      delete state.players[socket.id];
+      broadcastAdmin();
+      broadcastPlayersList();
+    }
   });
 });
 
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
 function publicRoundShape(){
   if(!state.round) return null;
   const {id,title,imageUrl,visibleMs,clickRadiusPct,question,startedAt,willDarkAt,reveal,target}=state.round;
   return {id,title,imageUrl,visibleMs,clickRadiusPct,question,startedAt,willDarkAt,reveal,target};
 }
 
-function shapeReveal(){
+function shapeRevealAll(){
   const clicks = Object.values(state.players)
     .filter(p=>p.click)
     .map(p=>({
@@ -194,5 +251,6 @@ function startRound(cfg){
   broadcastAdmin();
 }
 
+// ─────────────────────────────────────────────────────────────
 const PORT=process.env.PORT||10000;
 server.listen(PORT,()=>console.log('Server on :'+PORT));
