@@ -1,1 +1,153 @@
-<!doctype html><html><head><meta charset='utf-8'><title>Player</title><link rel='stylesheet' href='/style.css'><script src='https://cdn.socket.io/4.8.1/socket.io.min.js'></script></head><body><h1>Player</h1><div class='stage' id='stage'><img id='img'><div id='overlay' class='overlay-dark'></div><div id='clicks'></div><canvas id='mask'></canvas></div><div id='question'></div><script>const s=io();let myId,myColor,curRound,myClick;const img=document.getElementById('img'),overlay=document.getElementById('overlay'),clicks=document.getElementById('clicks'),mask=document.getElementById('mask'),ctx=mask.getContext('2d'),stage=document.getElementById('stage'),q=document.getElementById('question');function resize(){mask.width=stage.clientWidth;mask.height=stage.clientHeight;}addEventListener('resize',resize);function drawMine(){clicks.innerHTML='';if(!myClick)return;const d=document.createElement('div');d.className='dot';d.style.left=(myClick.x*100)+'%';d.style.top=(myClick.y*100)+'%';d.style.background=myColor;clicks.appendChild(d);}stage.onclick=e=>{if(!curRound)return;if(Date.now()<curRound.willDarkAt)return;if(myClick)return;const r=stage.getBoundingClientRect();myClick={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};drawMine();s.emit('player:click',myClick);};function applyDark(a){overlay.classList.toggle('active',!!a);}function clearMask(){ctx.clearRect(0,0,mask.width,mask.height);}function reveal(clicks,rPct){clearMask();ctx.fillStyle='rgba(0,0,0,0.95)';ctx.fillRect(0,0,mask.width,mask.height);ctx.globalCompositeOperation='destination-out';const r=rPct/100*Math.min(mask.width,mask.height);clicks.forEach(c=>{ctx.beginPath();ctx.arc(c.x*mask.width,c.y*mask.height,r,0,Math.PI*2);ctx.fill();});ctx.globalCompositeOperation='source-over';}s.on('hello',d=>{myId=d.id;myColor=d.color;if(d.round)onStart(d.round);});function onStart(r){curRound=r;myClick=null;drawMine();img.src=r.imageUrl;applyDark(false);clearMask();resize();setTimeout(()=>{applyDark(true);q.textContent=r.question||'';},Math.max(0,r.willDarkAt-Date.now()));}s.on('round:start',onStart);s.on('round:reveal',({clicks:cs,clickRadiusPct})=>{clicks.innerHTML='';cs.forEach(c=>{const d=document.createElement('div');d.className='dot';d.style.left=(c.x*100)+'%';d.style.top=(c.y*100)+'%';d.style.background=c.color;clicks.appendChild(d);const r=document.createElement('div');r.className='ring';r.style.left=(c.x*100)+'%';r.style.top=(c.y*100)+'%';r.style.width=(clickRadiusPct*2)+'%';r.style.height=(clickRadiusPct*2)+'%';r.style.borderColor=c.color;clicks.appendChild(r);});resize();reveal(cs,clickRadiusPct);});s.on('round:judged',({winners})=>{if(winners.includes(myId)){q.textContent+=(q.textContent?' ':'')+'+5 Punkte!';}});</script></body></html>
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Bildklick-Quiz – Spieler</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+</head>
+<body>
+  <h1>Spieler</h1>
+
+  <div class="stage" id="stage">
+    <img id="img" alt="Bild" />
+    <div id="overlay" class="overlay-dark"></div>
+    <div id="clicks"></div>
+    <canvas id="mask"></canvas>
+  </div>
+
+  <div id="question"></div>
+
+  <script>
+    const s = io();
+    let myId, myColor, curRound, myClick;
+
+    const img = document.getElementById('img');
+    const overlay = document.getElementById('overlay');
+    const clicks = document.getElementById('clicks');
+    const mask = document.getElementById('mask');
+    const ctx = mask.getContext('2d');
+    const stage = document.getElementById('stage');
+    const q = document.getElementById('question');
+
+    // Canvas korrekt dimensionieren
+    function resize(){
+      mask.width = stage.clientWidth;
+      mask.height = stage.clientHeight;
+    }
+    addEventListener('resize', resize);
+    // initial
+    requestAnimationFrame(resize);
+
+    function drawMine(){
+      clicks.innerHTML = '';
+      if (!myClick) return;
+      const d = document.createElement('div');
+      d.className = 'dot';
+      d.style.left = (myClick.x*100) + '%';
+      d.style.top  = (myClick.y*100) + '%';
+      d.style.background = myColor;
+      clicks.appendChild(d);
+    }
+
+    // Spieler darf erst nach Dunkelphase klicken, genau einmal
+    stage.onclick = (e) => {
+      if (!curRound) return;
+      if (Date.now() < curRound.willDarkAt) return; // erst nach Abdunkeln
+      if (myClick) return; // nur 1 Klick
+
+      const r = stage.getBoundingClientRect();
+      myClick = {
+        x: (e.clientX - r.left) / r.width,
+        y: (e.clientY - r.top)  / r.height
+      };
+      drawMine();
+      s.emit('player:click', myClick);
+    };
+
+    function applyDark(a){ overlay.classList.toggle('active', !!a); }
+    function clearMask(){ ctx.clearRect(0,0,mask.width,mask.height); }
+
+    // Nur EIGENEN Kreis „freistanzen“
+    function revealOwn(click, rPct){
+      clearMask();
+      if (!click) return; // kein Loch, Bild bleibt dunkel
+      // gesamte Fläche schwärzen
+      ctx.fillStyle = 'rgba(0,0,0,0.95)';
+      ctx.fillRect(0,0,mask.width,mask.height);
+      // Loch stanzen
+      ctx.globalCompositeOperation = 'destination-out';
+      const r = (rPct/100) * Math.min(mask.width, mask.height);
+      ctx.beginPath();
+      ctx.arc(click.x*mask.width, click.y*mask.height, r, 0, Math.PI*2);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // Server-Begrüßung
+    s.on('hello', d => {
+      myId = d.id;
+      myColor = d.color;
+      if (d.round) onStart(d.round);
+    });
+
+    // Rundenstart
+    function onStart(r){
+      curRound = r;
+      myClick = null;
+      drawMine();
+      img.src = r.imageUrl || '';
+      applyDark(false);
+      clearMask();
+      resize();
+
+      // Auto-Abdunkeln nach Sichtbarkeitszeit
+      const ms = Math.max(0, r.willDarkAt - Date.now());
+      setTimeout(()=>{
+        applyDark(true);
+        q.textContent = r.question || '';
+      }, ms);
+    }
+
+    s.on('round:start', onStart);
+
+    // ★ NEU: Reveal NUR für den eigenen Klick
+    // Der Server sendet round:revealYou ausschließlich an den jeweiligen Spieler
+    s.on('round:revealYou', ({ click, clickRadiusPct }) => {
+      // Nur den eigenen Dot & Ring zeichnen
+      clicks.innerHTML = '';
+      if (click) {
+        // Dot
+        const d = document.createElement('div');
+        d.className = 'dot';
+        d.style.left = (click.x*100) + '%';
+        d.style.top  = (click.y*100) + '%';
+        d.style.background = myColor;
+        clicks.appendChild(d);
+
+        // Ring
+        const r = document.createElement('div');
+        r.className = 'ring';
+        r.style.left = (click.x*100) + '%';
+        r.style.top  = (click.y*100) + '%';
+        r.style.width  = (clickRadiusPct*2) + '%';
+        r.style.height = (clickRadiusPct*2) + '%';
+        r.style.borderColor = myColor;
+        clicks.appendChild(r);
+      }
+
+      // Runder Bildausschnitt NUR um den eigenen Klick
+      resize();
+      revealOwn(click, clickRadiusPct);
+    });
+
+    // Auswertung
+    s.on('round:judged', ({ winners }) => {
+      if (Array.isArray(winners) && winners.includes(myId)) {
+        q.textContent = (q.textContent || '') + (q.textContent ? ' ' : '') + '✅ +5 Punkte!';
+      }
+    });
+  </script>
+</body>
+</html>
